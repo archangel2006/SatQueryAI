@@ -5,6 +5,7 @@ import { Button } from '../components/Button'
 import { Logo } from '../components/Logo'
 import { ThemeToggle } from '../components/ThemeToggle'
 import { useTheme } from '../ThemeContext'
+import { CloudScenePage } from './CloudScenePage'
 import { ROUTES } from '../routes'
 
 type JobStubPageProps = {
@@ -81,17 +82,5 @@ export function ChangeJobPage() {
 }
 
 export function CloudJobPage() {
-  return (
-    <>
-      <SignedOut>
-        <Navigate to={ROUTES.signIn} replace />
-      </SignedOut>
-      <SignedIn>
-        <JobStubChrome
-          title="See through cloud"
-          body="Optical + radar of the same place — when colour photos fail, radar still sees structure. Dual-slot workspace ships next."
-        />
-      </SignedIn>
-    </>
-  )
+  return <CloudScenePage />
 }

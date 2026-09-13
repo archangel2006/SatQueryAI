@@ -91,7 +91,7 @@ export function CompareSlider({
         src={afterUrl}
         alt=""
         draggable={false}
-        className="absolute inset-0 h-full w-full object-contain"
+        className="absolute inset-0 h-full w-full object-contain object-[100%_center]"
       />
 
       {/* Before = clipped from the left */}

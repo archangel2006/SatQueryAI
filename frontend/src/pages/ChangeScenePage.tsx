@@ -14,6 +14,7 @@ import {
   getMessages,
   getSession,
   listSessions,
+  postChange,
   postPreview,
   previewToObjectUrl,
   sendSessionMessage,
@@ -123,6 +124,14 @@ function ChangeSceneWorkspace() {
   )
   const [beforeBlob, setBeforeBlob] = useState(false)
   const [afterBlob, setAfterBlob] = useState(false)
+
+  // Raw File objects kept so we can POST them to /change
+  const [beforeFile, setBeforeFile] = useState<File | null>(null)
+  const [afterFile, setAfterFile] = useState<File | null>(null)
+
+  // Overlay attachment: { id, url } when model result is shown in renderer
+  const [overlayAttachment, setOverlayAttachment] = useState<{ id: string; url: string } | null>(null)
+  const [activeAttachmentId, setActiveAttachmentId] = useState<string | null>(null)
 
   const beforeUrlRef = useRef(beforeUrl)
   const afterUrlRef = useRef(afterUrl)
@@ -285,6 +294,10 @@ function ChangeSceneWorkspace() {
       setMessages([WELCOME])
       setDraft('')
       setZoom(1)
+      setBeforeFile(null)
+      setAfterFile(null)
+      setOverlayAttachment(null)
+      setActiveAttachmentId(null)
       applyDemoPair()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not create chat')
@@ -332,11 +345,13 @@ function ChangeSceneWorkspace() {
         setBeforeUrl(url)
         setBeforeFilename(file.name)
         setBeforeBlob(true)
+        setBeforeFile(file)
       } else {
         if (afterBlob) URL.revokeObjectURL(afterUrl)
         setAfterUrl(url)
         setAfterFilename(file.name)
         setAfterBlob(true)
+        setAfterFile(file)
       }
 
       const uploaded = await uploadSessionAsset(
@@ -381,6 +396,60 @@ function ChangeSceneWorkspace() {
     setBusy(true)
     setError(null)
     setDraft('')
+
+    // If both real images are uploaded, run the change detection model.
+    if (beforeFile && afterFile) {
+      try {
+        const userMsgId = `user-${Date.now()}`
+        setMessages((prev) => [
+          ...prev.filter((m) => m.id !== 'welcome'),
+          { id: userMsgId, role: 'user', text },
+        ])
+
+        const result = await postChange(beforeFile, afterFile, text)
+
+        // Build the assistant reply text
+        const method = (result.evidence as Record<string, unknown>)?.method as string | undefined
+        const fallback = ((result.evidence as Record<string, unknown>)?.metadata as Record<string, unknown>)?.fallback as boolean | undefined
+        const modelTag = fallback === false ? '🤖 **SiameseChangeDetector**' : '📐 **Pixel-difference fallback**'
+        const changePct = result.change_pct != null ? result.change_pct.toFixed(1) : '—'
+        const score = result.score != null ? result.score.toFixed(3) : '—'
+
+        let replyText = `${modelTag}\n\n${result.text}\n\n**Changed area:** ${changePct}%  |  **Score:** ${score}`
+        if (method) replyText += `  |  **Method:** ${method}`
+
+        // If the model returned an overlay, show it as an image attachment
+        let overlayUrl: string | undefined
+        if (result.overlay_png_base64) {
+          overlayUrl = previewToObjectUrl(result.overlay_png_base64)
+        }
+
+        const overlayId = overlayUrl ? `overlay-${Date.now()}` : undefined
+        if (overlayUrl && overlayId) {
+          setOverlayAttachment({ id: overlayId, url: overlayUrl })
+        }
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `assistant-${Date.now()}`,
+            role: 'assistant',
+            text: replyText,
+            ...(overlayUrl && overlayId
+              ? { attachment: { id: overlayId, url: overlayUrl, filename: 'change-overlay.png' } }
+              : {}),
+          },
+        ])
+
+      } catch (err) {
+        setDraft(text)
+        setError(err instanceof Error ? err.message : 'Change detection failed')
+      } finally {
+        setBusy(false)
+      }
+      return
+    }
+
+    // No real images uploaded yet — fall back to Gemini chat
     try {
       const res = await sendSessionMessage(tokenFn, sessionId, text)
       setMessages((prev) => [
@@ -439,10 +508,33 @@ function ChangeSceneWorkspace() {
                   stagedPreviewUrl={null}
                   onStageFile={() => undefined}
                   onClearStaged={() => undefined}
+                  activeAttachmentId={activeAttachmentId}
+                  onSelectAttachment={(id) => {
+                    if (activeAttachmentId === id) {
+                      // deselect — restore original after image
+                      setActiveAttachmentId(null)
+                      if (afterFile) {
+                        const url = URL.createObjectURL(afterFile)
+                        if (afterBlob) URL.revokeObjectURL(afterUrl)
+                        setAfterUrl(url)
+                        setAfterFilename(afterFile.name)
+                        setAfterBlob(true)
+                      }
+                    } else if (overlayAttachment && id === overlayAttachment.id) {
+                      setActiveAttachmentId(id)
+                      if (afterBlob) URL.revokeObjectURL(afterUrl)
+                      setAfterUrl(overlayAttachment.url)
+                      setAfterFilename('change-overlay.png')
+                      setAfterBlob(false)
+                    }
+                  }}
                   onExpandChat={() => setMode('chat')}
                   busy={busy || booting}
                   title="Before vs after"
-                  subtitle="Upload both dates under the renderer, then ask"
+                  subtitle={beforeFile && afterFile
+                    ? 'Both images loaded — send a query to run the model'
+                    : 'Upload both dates under the renderer, then ask'
+                  }
                 />
                 <div className="flex gap-3 border-t border-border bg-surface px-4 py-2 text-[11px] text-muted">
                   <span>

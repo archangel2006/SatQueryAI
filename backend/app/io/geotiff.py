@@ -41,12 +41,25 @@ def _sar_log_preview(band: np.ndarray) -> np.ndarray:
     return _percentile_stretch(log)
 
 
-def _guess_modality(band_count: int, dtype: np.dtype) -> ModalityGuess:
+def _guess_modality(
+    band_count: int,
+    dtype: np.dtype,
+    filename: str = "",
+    descriptions: tuple[str | None, ...] = (),
+) -> ModalityGuess:
+    identifiers = " ".join(
+        [filename.lower(), *(description or "" for description in descriptions)]
+    )
+    if any(
+        token in identifiers
+        for token in ("sar", "radar", "sentinel-1", "sentinel1", "risat", "vv", "vh")
+    ):
+        return "sar"
     if band_count == 1 and np.issubdtype(dtype, np.floating):
         return "sar"
     if band_count >= 3:
         return "optical"
-    if band_count == 1:
+    if band_count in (1, 2):
         return "sar"
     return "unknown"
 
@@ -113,9 +126,14 @@ def _preview_rasterio(data: bytes, filename: str) -> tuple[str, ImageMetadata]:
             out_h = max(1, int(height / scale))
             out_w = max(1, int(width / scale))
 
-            modality = _guess_modality(count, ds.dtypes[0] if count else np.dtype("float32"))
+            modality = _guess_modality(
+                count,
+                ds.dtypes[0] if count else np.dtype("float32"),
+                filename,
+                tuple(ds.descriptions or ()),
+            )
 
-            if count >= 3:
+            if count >= 3 and modality != "sar":
                 # Prefer RGB-ish first three bands
                 bands = []
                 for i in range(1, 4):

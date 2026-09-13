@@ -91,11 +91,11 @@ export function ImageRenderer({
 
       <div className="relative min-h-0 flex-1 overflow-auto bg-[#0a1220]/5 dark:bg-black/40">
         {previewUrl ? (
-          <div className="flex min-h-full items-center justify-center p-4">
+          <div className="flex h-full min-h-full w-full items-center justify-center p-4">
             <img
               src={previewUrl}
               alt="Satellite preview"
-              className="max-h-full max-w-full origin-center rounded-md shadow-sm transition-transform"
+              className="h-full w-full origin-center rounded-md object-contain shadow-sm transition-transform"
               style={{ transform: `scale(${zoom})` }}
             />
           </div>

@@ -1,0 +1,23 @@
+# LEVIR-CD Bi-Temporal Change Detection — Training Configuration
+
+dataset_root: /content/LEVIR-CD
+checkpoint_dir: /content/drive/MyDrive/SatQueryAI_work/checkpoints
+
+# Input
+image_size: 256        # spatial size fed to the model (H = W)
+
+# Training
+batch_size: 8
+num_workers: 2
+epochs: 30
+learning_rate: 1.0e-4
+weight_decay: 1.0e-4
+
+# Loss weights  (total = bce + dice_weight * dice)
+dice_weight: 1.0
+
+# Inference
+threshold: 0.5
+
+# Reproducibility
+seed: 42

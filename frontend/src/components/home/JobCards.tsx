@@ -126,7 +126,7 @@ export function JobCards() {
               <div className="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-surface to-transparent" />
               {!job.live ? (
                 <span className="absolute right-3 top-3 rounded-full bg-bg/90 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted backdrop-blur">
-                  Soon
+                  Open
                 </span>
               ) : (
                 <span className="absolute right-3 top-3 rounded-full bg-accent px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-white">

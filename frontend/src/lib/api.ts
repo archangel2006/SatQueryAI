@@ -14,6 +14,22 @@ export type PreviewResponse = {
   metadata: ImageMetadata
 }
 
+export type FusionResponse = {
+  text: string
+  overlay_png_base64: string | null
+  cloud_pct: number | null
+  score: number | null
+  evidence: Record<string, unknown>
+}
+
+export type ChangeResponse = {
+  text: string
+  overlay_png_base64: string | null
+  score: number | null
+  change_pct: number | null
+  evidence: Record<string, unknown>
+}
+
 export type SessionListItem = {
   id: string
   title: string
@@ -94,6 +110,40 @@ export async function postPreview(file: File): Promise<PreviewResponse> {
   })
   if (!res.ok) throw new Error(await readError(res, 'Preview failed'))
   return (await res.json()) as PreviewResponse
+}
+
+export async function postFusion(
+  optical: File,
+  sar: File,
+  query?: string,
+): Promise<FusionResponse> {
+  const body = new FormData()
+  body.append('files', optical)
+  body.append('files', sar)
+  if (query?.trim()) body.append('query', query.trim())
+  const res = await fetch(`${API_URL}/fusion`, {
+    method: 'POST',
+    body,
+  })
+  if (!res.ok) throw new Error(await readError(res, 'Fusion failed'))
+  return (await res.json()) as FusionResponse
+}
+
+export async function postChange(
+  before: File | Blob,
+  after: File | Blob,
+  query?: string,
+): Promise<ChangeResponse> {
+  const body = new FormData()
+  body.append('files', before)
+  body.append('files', after)
+  if (query?.trim()) body.append('query', query.trim())
+  const res = await fetch(`${API_URL}/change`, {
+    method: 'POST',
+    body,
+  })
+  if (!res.ok) throw new Error(await readError(res, 'Change detection failed'))
+  return (await res.json()) as ChangeResponse
 }
 
 export function previewToObjectUrl(base64: string): string {

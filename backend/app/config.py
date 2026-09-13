@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     google_application_credentials: str = ""
     gemini_model: str = "gemini-3.6-flash"
     gemini_api_key: str = ""
+    fusion_checkpoint_path: str = "checkpoints/fusion_model.pt"
+    fusion_device: str = "cpu"
+    change_checkpoint_path: str = "checkpoints/change_model.pt"
     chat_context_message_limit: int = 20
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     local_classifier_path: str = ""
