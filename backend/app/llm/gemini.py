@@ -20,6 +20,7 @@ class ChatLLM(Protocol):
         history: list[ChatTurn],
         user_message: str,
         image_png_bytes: bytes | None,
+        grounding: str | None = None,
     ) -> str:
         ...
 
@@ -30,13 +31,17 @@ class FakeLLM:
         history: list[ChatTurn],
         user_message: str,
         image_png_bytes: bytes | None,
+        grounding: str | None = None,
     ) -> str:
         n = len(history)
         has_image = "yes" if image_png_bytes else "no"
-        return (
+        text = (
             f"Echo: {user_message} "
             f"(context_turns={n}, image={has_image})"
         )
+        if grounding:
+            text += f" [grounding={grounding}]"
+        return text
 
 
 class GeminiLLM:
@@ -69,6 +74,7 @@ class GeminiLLM:
         history: list[ChatTurn],
         user_message: str,
         image_png_bytes: bytes | None,
+        grounding: str | None = None,
     ) -> str:
         from google.genai import types
 
@@ -83,12 +89,19 @@ class GeminiLLM:
                 )
             )
 
+        system_instruction = (
+            "You are SatQuery AI, a helpful assistant for satellite imagery. "
+            "Answer clearly about the scene when an image is provided. "
+            "If unsure, say so. Keep answers concise."
+        )
+        if grounding:
+            system_instruction += (
+                f" {grounding} Treat this as supporting context from an auxiliary "
+                "model, not ground truth — weigh it against what you see in the image."
+            )
+
         config_kwargs: dict = {
-            "system_instruction": (
-                "You are SatQuery AI, a helpful assistant for satellite imagery. "
-                "Answer clearly about the scene when an image is provided. "
-                "If unsure, say so. Keep answers concise."
-            ),
+            "system_instruction": system_instruction,
             "automatic_function_calling": types.AutomaticFunctionCallingConfig(
                 disable=True,
             ),

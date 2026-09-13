@@ -16,3 +16,11 @@ PyJWT[crypto]>=2.9.0
 google-cloud-storage>=2.18.0
 google-genai>=1.0.0
 python-dotenv>=1.0.0
+
+# Optional: only needed to run the local scene/land-cover classifier
+# (app/llm/local_classifier.py). Without these, or without
+# models/bentxt_convnext.pt (trained on Kaggle, see train/README.md), the
+# classifier disables itself and the rest of the app is unaffected.
+torch>=2.2.0
+torchvision>=0.17.0
+timm>=1.0.0

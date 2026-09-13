@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 import uuid
 from datetime import datetime, timezone
 from uuid import UUID
@@ -13,6 +14,7 @@ from sqlalchemy.orm import selectinload
 from app.config import Settings
 from app.io.geotiff import preview_from_bytes
 from app.llm.gemini import ChatLLM, ChatTurn
+from app.llm.local_classifier import ClassificationResult, get_classifier
 from app.models import Asset, ChatSession, Message
 from app.schemas_chat import (
     AssetOut,
@@ -31,8 +33,47 @@ from app.storage.gcs import (
 )
 
 
+logger = logging.getLogger(__name__)
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _classify_scene(image_png_bytes: bytes | None) -> ClassificationResult | None:
+    """Run the local scene/land-cover classifier, if a trained checkpoint is loaded.
+
+    Never raises — a missing/unavailable classifier (no checkpoint trained yet,
+    see train/README.md) just means no classification, not a broken upload.
+    """
+    if not image_png_bytes:
+        return None
+    try:
+        classifier = get_classifier()
+    except Exception:
+        logger.exception("Failed to obtain scene classifier")
+        return None
+    if not classifier.available:
+        return None
+    result = classifier.classify(image_png_bytes)
+    if result is not None:
+        logger.info(
+            "scene_classifier: label=%s confidence=%.3f topk=%s",
+            result.label,
+            result.confidence,
+            result.topk,
+        )
+    return result
+
+
+def _grounding_text(classification: ClassificationResult | None) -> str | None:
+    if classification is None:
+        return None
+    return (
+        f"An auxiliary land-cover classifier (ConvNeXt-tiny, fine-tuned on BigEarthNet) "
+        f"predicts this scene is most likely '{classification.label}' "
+        f"(confidence {classification.confidence:.0%})."
+    )
 
 
 _DEFAULT_CHANGE_TITLES = frozenset({"Before vs after"})
@@ -250,6 +291,15 @@ async def upload_asset(
     gcs_uri = storage.upload_bytes(original_key, data, content_type)
     preview_uri = storage.upload_bytes(preview_key, preview_bytes, "image/png")
 
+    classification = _classify_scene(preview_bytes)
+    metadata_dict = metadata.model_dump()
+    if classification is not None:
+        metadata_dict["scene_classification"] = {
+            "label": classification.label,
+            "confidence": classification.confidence,
+            "topk": [{"label": label, "confidence": conf} for label, conf in classification.topk],
+        }
+
     asset = Asset(
         id=asset_id,
         session_id=session_id,
@@ -258,7 +308,7 @@ async def upload_asset(
         content_type=content_type,
         gcs_uri=gcs_uri,
         preview_gcs_uri=preview_uri,
-        metadata_json=metadata.model_dump(),
+        metadata_json=metadata_dict,
         created_at=_utcnow(),
     )
 
@@ -293,7 +343,7 @@ async def upload_asset(
         db.add(user_msg)
         await db.flush()
         try:
-            answer = llm.answer(history, question, preview_bytes)
+            answer = llm.answer(history, question, preview_bytes, grounding=_grounding_text(classification))
         except Exception as exc:  # noqa: BLE001
             await db.rollback()
             raise HTTPException(
@@ -329,6 +379,10 @@ async def upload_asset(
             if metadata.format_kind == "geotiff"
             else "Got it — benchmark image loaded (no CRS). Preview is on the right."
         )
+        if classification is not None:
+            assistant_text += (
+                f" Detected scene type: {classification.label} ({classification.confidence:.0%})."
+            )
         assistant_msg = Message(
             id=uuid.uuid4(),
             session_id=session_id,
@@ -419,8 +473,9 @@ async def send_message(
     db.add(user_msg)
     await db.flush()
 
+    classification = _classify_scene(image_bytes)
     try:
-        answer = llm.answer(history, text, image_bytes)
+        answer = llm.answer(history, text, image_bytes, grounding=_grounding_text(classification))
     except Exception as exc:  # noqa: BLE001
         await db.rollback()
         raise HTTPException(
