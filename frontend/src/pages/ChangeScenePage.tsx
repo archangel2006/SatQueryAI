@@ -103,6 +103,7 @@ function ChangeSceneWorkspace() {
   const tokenFn = useCallback(async () => getTokenRef.current(), [])
 
   const [mode, setMode] = useState<WorkspaceMode>('split')
+  const [rightPanelOpen, setRightPanelOpen] = useState(true)
   const [sessions, setSessions] = useState<SessionListItem[]>([])
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatMessageData[]>([WELCOME])
@@ -243,41 +244,41 @@ function ChangeSceneWorkspace() {
   useEffect(() => {
     if (!isLoaded || !isSignedIn) return
     let cancelled = false
-    ;(async () => {
-      try {
-        const rows = filterChangeSessions(await listSessions(tokenFn))
-        if (cancelled) return
-        setSessions(rows)
-        if (rows.length === 0) {
-          const created = await createSession(
-            tokenFn,
-            'Before vs after',
-            JOB_TYPE,
-          )
-          if (cancelled) return
-          setSessions([created])
-          selectSessionId(created.id)
-          setMessages([WELCOME])
-          return
-        }
-        let preferred: string | null = null
+      ; (async () => {
         try {
-          preferred = localStorage.getItem(ACTIVE_SESSION_KEY)
-        } catch {
-          preferred = null
+          const rows = filterChangeSessions(await listSessions(tokenFn))
+          if (cancelled) return
+          setSessions(rows)
+          if (rows.length === 0) {
+            const created = await createSession(
+              tokenFn,
+              'Before vs after',
+              JOB_TYPE,
+            )
+            if (cancelled) return
+            setSessions([created])
+            selectSessionId(created.id)
+            setMessages([WELCOME])
+            return
+          }
+          let preferred: string | null = null
+          try {
+            preferred = localStorage.getItem(ACTIVE_SESSION_KEY)
+          } catch {
+            preferred = null
+          }
+          const match = preferred && rows.some((r) => r.id === preferred)
+          const id = match && preferred ? preferred : rows[0].id
+          if (cancelled) return
+          await loadSession(id)
+        } catch (err) {
+          if (!cancelled) {
+            setError(err instanceof Error ? err.message : 'Could not start chat')
+          }
+        } finally {
+          if (!cancelled) setBooting(false)
         }
-        const match = preferred && rows.some((r) => r.id === preferred)
-        const id = match && preferred ? preferred : rows[0].id
-        if (cancelled) return
-        await loadSession(id)
-      } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'Could not start chat')
-        }
-      } finally {
-        if (!cancelled) setBooting(false)
-      }
-    })()
+      })()
     return () => {
       cancelled = true
     }
@@ -474,14 +475,26 @@ function ChangeSceneWorkspace() {
     }
   }
 
+  // Edit inside ChangeSceneWorkspace in ChangeScenePage.tsx
+
   return (
-    <div className="flex h-screen flex-col bg-bg text-ink">
+    <div className="flex h-screen flex-col bg-[#030712] text-slate-100">
       <Navbar />
-      {error ? (
-        <div className="border-b border-change/40 bg-change/10 px-4 py-2 text-xs text-ink">
-          {error}
+
+      {/* Task Header Bar */}
+      <div className="flex items-center justify-between border-b border-slate-800 bg-[#080E1A] px-4 py-2 text-xs font-mono text-slate-300">
+        <div className="flex items-center gap-4">
+          <span className="bg-amber-500/10 text-amber-400 border border-amber-500/30 px-2 py-0.5 rounded">
+            TASK: CHANGE_DETECTION
+          </span>
+          <span className="text-slate-400">TOOL: bi-temporal-change-mask</span>
         </div>
-      ) : null}
+        <div className="text-slate-500">
+          COMPARISON MODE: <span className="text-emerald-400">SYNCHRONIZED_PANELS</span>
+        </div>
+      </div>
+
+      {/* Main Viewport */}
       <div className="flex min-h-0 flex-1">
         <SessionSidebar
           sessions={sessions}
@@ -497,8 +510,10 @@ function ChangeSceneWorkspace() {
           <SplitWorkspace
             mode={mode}
             onModeChange={setMode}
+            rightPanelOpen={rightPanelOpen}
+            onRightPanelToggle={() => setRightPanelOpen((open) => !open)}
             chat={
-              <div className="flex h-full min-h-0 flex-col">
+              <div className="flex h-full min-h-0 flex-col bg-[#060D1A]">
                 <ChatPanel
                   messages={messages}
                   draft={draft}
@@ -554,8 +569,8 @@ function ChangeSceneWorkspace() {
                 afterUrl={afterUrl}
                 beforeFilename={beforeFilename}
                 afterFilename={afterFilename}
-                title="scene1 · Before-After"
-                subtitle="Upload replaces left / right"
+                title="SCENE_DELTA // T1 vs T2"
+                subtitle="Dual-slot co-registered frame analysis"
                 legendLabel={null}
                 zoom={zoom}
                 onZoomChange={setZoom}

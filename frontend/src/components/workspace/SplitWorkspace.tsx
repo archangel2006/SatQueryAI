@@ -8,6 +8,8 @@ import {
 type SplitWorkspaceProps = {
   mode: WorkspaceMode
   onModeChange: (mode: WorkspaceMode) => void
+  rightPanelOpen: boolean
+  onRightPanelToggle: () => void
   chat: ReactNode
   renderer: ReactNode
 }
@@ -15,6 +17,8 @@ type SplitWorkspaceProps = {
 export function SplitWorkspace({
   mode,
   onModeChange,
+  rightPanelOpen,
+  onRightPanelToggle,
   chat,
   renderer,
 }: SplitWorkspaceProps) {
@@ -82,29 +86,68 @@ export function SplitWorkspace({
           <span aria-hidden="true">›</span>
           <span style={{ writingMode: 'vertical-rl' }}>Chat</span>
         </button>
+
         <div className="min-w-0 flex-1">{renderer}</div>
       </div>
     )
   }
 
   return (
-    <div ref={rootRef} className="flex h-full min-h-0">
-      <div className="min-w-0" style={{ width: `${percent}%` }}>
-        {chat}
-      </div>
+    <div ref={rootRef} className="relative flex h-full min-h-0">
+      {/* CHAT PANEL */}
       <div
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize panels"
-        title="Drag to resize"
-        className="group relative z-10 flex w-2 shrink-0 cursor-col-resize items-center justify-center bg-border/60 hover:bg-accent"
-        onPointerDown={() => {
-          dragging.current = true
+        className="min-w-0 transition-all duration-300"
+        style={{
+          width: rightPanelOpen ? `${percent}%` : '100%',
         }}
       >
-        <span className="h-8 w-1 rounded-full bg-muted group-hover:bg-accent" />
+        {chat}
       </div>
-      <div className="min-w-0 flex-1">{renderer}</div>
+
+      {rightPanelOpen ? (
+        <>
+          {/* RESIZE HANDLE */}
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize panels"
+            title="Drag to resize"
+            className="group relative z-10 flex w-2 shrink-0 cursor-col-resize items-center justify-center bg-border/60 hover:bg-accent"
+            onPointerDown={() => {
+              dragging.current = true
+            }}
+          >
+            <span className="h-8 w-1 rounded-full bg-muted group-hover:bg-accent" />
+          </div>
+
+          {/* RIGHT IMAGE PANEL */}
+          <div className="relative min-w-0 flex-1">
+            {/* COLLAPSE BUTTON */}
+            <button
+              type="button"
+              onClick={onRightPanelToggle}
+              className="absolute left-2 top-1/2 z-50 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-surface text-lg font-semibold text-muted shadow-lg transition-all hover:scale-105 hover:bg-bg hover:text-ink"
+              title="Hide image preview"
+              aria-label="Hide image preview"
+            >
+              ›
+            </button>
+
+            {renderer}
+          </div>
+        </>
+      ) : (
+        /* OPEN BUTTON */
+        <button
+          type="button"
+          onClick={onRightPanelToggle}
+          className="absolute right-3 top-1/2 z-50 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-surface text-lg font-semibold text-muted shadow-lg transition-all hover:scale-105 hover:bg-bg hover:text-ink"
+          title="Show image preview"
+          aria-label="Show image preview"
+        >
+          ‹
+        </button>
+      )}
     </div>
   )
 }

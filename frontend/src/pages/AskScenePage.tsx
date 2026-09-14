@@ -180,44 +180,46 @@ function AskSceneWorkspace() {
     [clearStaged, selectSessionId, tokenFn],
   )
 
+  const [rightPanelOpen, setRightPanelOpen] = useState(true)
+
   useEffect(() => {
     if (!isLoaded || !isSignedIn) return
     let cancelled = false
-    ;(async () => {
-      try {
-        const rows = filterAskSessions(await listSessions(tokenFn))
-        if (cancelled) return
-        setSessions(rows)
-        if (rows.length === 0) {
-          const created = await createSession(tokenFn, 'New chat', ASK_JOB)
-          if (cancelled) return
-          setSessions([created])
-          selectSessionId(created.id)
-          setMessages([WELCOME])
-          return
-        }
-        let preferred: string | null = null
+      ; (async () => {
         try {
-          preferred = localStorage.getItem(ACTIVE_SESSION_KEY)
-        } catch {
-          preferred = null
+          const rows = filterAskSessions(await listSessions(tokenFn))
+          if (cancelled) return
+          setSessions(rows)
+          if (rows.length === 0) {
+            const created = await createSession(tokenFn, 'New chat', ASK_JOB)
+            if (cancelled) return
+            setSessions([created])
+            selectSessionId(created.id)
+            setMessages([WELCOME])
+            return
+          }
+          let preferred: string | null = null
+          try {
+            preferred = localStorage.getItem(ACTIVE_SESSION_KEY)
+          } catch {
+            preferred = null
+          }
+          const match = preferred && rows.some((r) => r.id === preferred)
+          const id = match && preferred ? preferred : rows[0].id
+          if (cancelled) return
+          await loadSession(id)
+        } catch (err) {
+          if (!cancelled) {
+            setError(err instanceof Error ? err.message : 'Could not start chat')
+          }
+        } finally {
+          if (!cancelled) setBooting(false)
         }
-        const match = preferred && rows.some((r) => r.id === preferred)
-        const id = match && preferred ? preferred : rows[0].id
-        if (cancelled) return
-        await loadSession(id)
-      } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'Could not start chat')
-        }
-      } finally {
-        if (!cancelled) setBooting(false)
-      }
-    })()
+      })()
     return () => {
       cancelled = true
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional one-shot boot
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional one-shot boot 
   }, [isLoaded, isSignedIn])
 
   async function handleNewChat() {
@@ -270,53 +272,198 @@ function AskSceneWorkspace() {
     }
   }
 
+  // async function handleSend() { 
+  //   const text = draft.trim() 
+  //   if (!text || !sessionId) return 
+  //   setDraft('') 
+  //   setBusy(true) 
+  //   setError(null) 
+  //   const file = stagedFile 
+  //   try { 
+  //     if (file) { 
+  //       const res = await uploadSessionAsset(tokenFn, sessionId, file, text) 
+  //       const url = previewToObjectUrl(res.asset.preview_png_base64 ?? '') 
+  //       const id = res.asset.id 
+  //       setPreviews((prev) => ({ 
+  //         ...prev, 
+  //         [id]: { url, metadata: res.asset.metadata }, 
+  //       })) 
+  //       setActiveId(id) 
+  //       setZoom(1) 
+  //       setMode('split') 
+  //       setMessages((prev) => [ 
+  //         ...prev.filter((m) => m.id !== 'welcome'), 
+  //         messageToUi(res.user_message, { 
+  //           [id]: { url, metadata: res.asset.metadata }, 
+  //         }), 
+  //         messageToUi(res.assistant_message, {}), 
+  //       ]) 
+  //       clearStaged() 
+  //     } else { 
+  //       const res = await sendSessionMessage(tokenFn, sessionId, text) 
+  //       setMessages((prev) => [ 
+  //         ...prev.filter((m) => m.id !== 'welcome'), 
+  //         messageToUi(res.user_message, previews), 
+  //         messageToUi(res.assistant_message, previews), 
+  //       ]) 
+  //     } 
+  //     await refreshSessions() 
+  //   } catch (err) { 
+  //     const message = err instanceof Error ? err.message : 'Send failed' 
+  //     setError(message) 
+  //     setMessages((prev) => [ 
+  //       ...prev, 
+  //       { id: `err-${Date.now()}`, role: 'assistant', text: message }, 
+  //     ]) 
+  //   } finally { 
+  //     setBusy(false) 
+  //   } 
+  // } 
+
+
+
   async function handleSend() {
     const text = draft.trim()
     if (!text || !sessionId) return
+
     setDraft('')
     setBusy(true)
     setError(null)
+
     const file = stagedFile
+
+    const pendingUserId = `pending-user-${Date.now()}`
+    const pendingAssistantId = `pending-assistant-${Date.now()}`
+
+    // Immediately show the user's message and an active AI state. 
+    setMessages((prev) => [
+      ...prev.filter((m) => m.id !== 'welcome'),
+      {
+        id: pendingUserId,
+        role: 'user',
+        text,
+      },
+      {
+        id: pendingAssistantId,
+        role: 'assistant',
+        text: '◉ Analyzing scene…',
+      },
+    ])
+
     try {
       if (file) {
-        const res = await uploadSessionAsset(tokenFn, sessionId, file, text)
-        const url = previewToObjectUrl(res.asset.preview_png_base64 ?? '')
+        const res = await uploadSessionAsset(
+          tokenFn,
+          sessionId,
+          file,
+          text,
+        )
+
+        const url = previewToObjectUrl(
+          res.asset.preview_png_base64 ?? '',
+        )
+
         const id = res.asset.id
+
         setPreviews((prev) => ({
           ...prev,
-          [id]: { url, metadata: res.asset.metadata },
+          [id]: {
+            url,
+            metadata: res.asset.metadata,
+          },
         }))
+
         setActiveId(id)
         setZoom(1)
         setMode('split')
-        setMessages((prev) => [
-          ...prev.filter((m) => m.id !== 'welcome'),
-          messageToUi(res.user_message, {
-            [id]: { url, metadata: res.asset.metadata },
+
+        const userMessage = messageToUi(res.user_message, {
+          [id]: {
+            url,
+            metadata: res.asset.metadata,
+          },
+        })
+
+        const assistantMessage = messageToUi(
+          res.assistant_message,
+          {},
+        )
+
+        // Replace the temporary messages with the real response. 
+        setMessages((prev) =>
+          prev.map((message) => {
+            if (message.id === pendingUserId) {
+              return userMessage
+            }
+
+            if (message.id === pendingAssistantId) {
+              return assistantMessage
+            }
+
+            return message
           }),
-          messageToUi(res.assistant_message, {}),
-        ])
+        )
+
         clearStaged()
       } else {
-        const res = await sendSessionMessage(tokenFn, sessionId, text)
-        setMessages((prev) => [
-          ...prev.filter((m) => m.id !== 'welcome'),
-          messageToUi(res.user_message, previews),
-          messageToUi(res.assistant_message, previews),
-        ])
+        const res = await sendSessionMessage(
+          tokenFn,
+          sessionId,
+          text,
+        )
+
+        const userMessage = messageToUi(
+          res.user_message,
+          previews,
+        )
+
+        const assistantMessage = messageToUi(
+          res.assistant_message,
+          previews,
+        )
+
+        // Replace the temporary messages with the real response. 
+        setMessages((prev) =>
+          prev.map((message) => {
+            if (message.id === pendingUserId) {
+              return userMessage
+            }
+
+            if (message.id === pendingAssistantId) {
+              return assistantMessage
+            }
+
+            return message
+          }),
+        )
       }
+
       await refreshSessions()
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Send failed'
+      const message =
+        err instanceof Error ? err.message : 'Send failed'
+
       setError(message)
-      setMessages((prev) => [
-        ...prev,
-        { id: `err-${Date.now()}`, role: 'assistant', text: message },
-      ])
+
+      // Keep the user's message, but turn the processing bubble into 
+      // the error instead of adding another message underneath it. 
+      setMessages((prev) =>
+        prev.map((item) =>
+          item.id === pendingAssistantId
+            ? {
+              id: `err-${Date.now()}`,
+              role: 'assistant',
+              text: message,
+            }
+            : item,
+        ),
+      )
     } finally {
       setBusy(false)
     }
   }
+
+
 
   function selectAttachment(id: string) {
     if (!previews[id]) return
@@ -325,14 +472,41 @@ function AskSceneWorkspace() {
     if (mode === 'chat') setMode('split')
   }
 
+  // Edit inside AskSceneWorkspace component in AskScenePage.tsx 
+
   return (
-    <div className="flex h-screen flex-col bg-bg text-ink">
+    <div className="flex h-screen flex-col bg-[#030712] text-slate-200 font-sans">
       <Navbar />
-      {error ? (
-        <div className="border-b border-change/40 bg-change/10 px-4 py-2 text-xs text-ink">
-          {error}
+
+      {/* Agent Pipeline Visualizer Status Strip */}
+      <div className="flex items-center justify-between border-b border-slate-800 bg-[#060D1A] px-6 py-2 text-xs font-mono">
+        <div className="flex items-center gap-6 text-slate-400">
+          <span className="text-slate-500 font-semibold uppercase">Pipeline Status:</span>
+          <div className="flex items-center gap-2">
+            <span className={`h-2 w-2 rounded-full ${busy ? 'bg-amber-400 animate-ping' : 'bg-emerald-400'}`} />
+            <span className={busy ? 'text-amber-400' : 'text-emerald-400'}>
+              {busy ? 'AGENT_PROCESSING' : 'SYSTEM_IDLE'}
+            </span>
+          </div>
         </div>
-      ) : null}
+
+        {/* Dynamic Execution Trace Steps */}
+        <div className="hidden md:flex items-center gap-3 text-[11px] font-mono text-slate-400">
+          <span className="px-2 py-0.5 rounded border border-slate-800 bg-slate-900/50">1. VALIDATE</span>
+          <span>→</span>
+          <span className="px-2 py-0.5 rounded border border-slate-800 bg-slate-900/50">2. CLASSIFY</span>
+          <span>→</span>
+          <span className="px-2 py-0.5 rounded border border-slate-800 bg-slate-900/50">3. ROUTE</span>
+          <span>→</span>
+          <span className="px-2 py-0.5 rounded border border-slate-800 bg-slate-900/50">4. VLM_EXECUTE</span>
+        </div>
+
+        <div className="text-slate-500">
+          ACTIVE_SESSION: <span className="text-slate-300">{sessionId ? sessionId.slice(0, 8) : 'NONE'}</span>
+        </div>
+      </div>
+
+      {/* Dynamic Workspace Container */}
       <div className="flex min-h-0 flex-1">
         <SessionSidebar
           sessions={sessions}
@@ -344,12 +518,14 @@ function AskSceneWorkspace() {
           onDelete={(id) => void handleDelete(id)}
           busy={busy || booting}
         />
-        <div className="min-h-0 min-w-0 flex-1">
+        <div className="min-h-0 min-w-0 flex-1 border-l border-slate-800">
           <SplitWorkspace
             mode={mode}
             onModeChange={setMode}
+            rightPanelOpen={rightPanelOpen}
+            onRightPanelToggle={() => setRightPanelOpen((open) => !open)}
             chat={
-              <ChatPanel
+              <ChatPanel 
                 messages={messages}
                 draft={draft}
                 onDraftChange={setDraft}
@@ -360,8 +536,8 @@ function AskSceneWorkspace() {
                 onClearStaged={clearStaged}
                 activeAttachmentId={activeId}
                 onSelectAttachment={selectAttachment}
-                onExpandChat={() => setMode('chat')}
                 busy={busy || booting}
+                analysisLoading={busy && !booting}
               />
             }
             renderer={
@@ -385,3 +561,4 @@ function AskSceneWorkspace() {
     </div>
   )
 }
+

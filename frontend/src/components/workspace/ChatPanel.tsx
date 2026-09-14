@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
-import { Button } from '../Button'
 import { ChatComposer } from './ChatComposer'
 import { ChatMessage, type ChatMessageData } from './ChatMessage'
+import { AnalysisLoading } from './AnalysisLoading'
 
 type ChatPanelProps = {
   messages: ChatMessageData[]
@@ -14,8 +14,8 @@ type ChatPanelProps = {
   onClearStaged: () => void
   activeAttachmentId?: string | null
   onSelectAttachment?: (id: string) => void
-  onExpandChat: () => void
   busy?: boolean
+  analysisLoading?: boolean
   title?: string
   subtitle?: string
 }
@@ -31,8 +31,8 @@ export function ChatPanel({
   onClearStaged,
   activeAttachmentId,
   onSelectAttachment,
-  onExpandChat,
   busy,
+  analysisLoading = false,
   title = 'Ask this scene',
   subtitle = 'Attach a scene, ask a question, then Send',
 }: ChatPanelProps) {
@@ -40,20 +40,25 @@ export function ChatPanel({
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages.length])
+  }, [messages.length, analysisLoading])
 
   return (
     <div className="flex h-full min-h-0 flex-col border-r border-border bg-bg">
-      <div className="flex items-center justify-between border-b border-border px-4 py-3">
-        <div>
-          <h2 className="text-sm font-semibold text-ink">{title}</h2>
-          <p className="text-xs text-muted">{subtitle}</p>
-        </div>
-        <Button variant="ghost" className="text-xs" onClick={onExpandChat}>
-          Expand chat
-        </Button>
+
+      {/* Header */}
+      <div className="shrink-0 border-b border-border px-4 py-2.5">
+        <h2 className="text-sm font-semibold leading-5 text-ink">
+          {title}
+        </h2>
+
+        <p className="mt-0.5 text-[11px] leading-4 text-muted">
+          {subtitle}
+        </p>
       </div>
-      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4">
+
+      {/* Messages */}
+      <div className="chat-scrollbar min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-5">
+
         {messages.map((message) => (
           <ChatMessage
             key={message.id}
@@ -62,8 +67,13 @@ export function ChatPanel({
             onSelectAttachment={onSelectAttachment}
           />
         ))}
+
+        {analysisLoading && <AnalysisLoading />}
+
         <div ref={endRef} />
       </div>
+
+      {/* Composer */}
       <ChatComposer
         value={draft}
         onChange={onDraftChange}

@@ -38,25 +38,33 @@ export function ChatComposer({
       className="border-t border-border bg-bg px-3 py-3"
     >
       {stagedFile ? (
-        <div className="mb-2 flex items-center gap-2 rounded-lg border border-accent/50 bg-accent/5 px-2 py-1.5">
+        <div className="mb-2 inline-flex max-w-[220px] items-center gap-2 rounded-xl border border-border bg-surface px-2 py-2 shadow-sm">
           {stagedPreviewUrl ? (
             <img
               src={stagedPreviewUrl}
               alt=""
-              className="h-10 w-10 rounded object-cover"
+              className="h-12 w-12 shrink-0 rounded-lg object-cover"
             />
           ) : null}
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-xs font-medium text-ink">{stagedFile.name}</p>
-            <p className="text-[10px] text-muted">Attached — type your question, then Send</p>
+
+          <div className="min-w-0">
+            <p className="max-w-[120px] truncate text-[11px] font-medium text-ink">
+              {stagedFile.name}
+            </p>
+            <p className="mt-0.5 text-[9px] text-muted">
+              Image attached
+            </p>
           </div>
+
           <button
             type="button"
-            className="rounded px-2 text-xs text-muted hover:text-change"
+            className="ml-1 shrink-0 rounded-full px-1.5 py-1 text-xs text-muted hover:bg-bg hover:text-ink"
             onClick={onClearStaged}
             disabled={busy}
+            aria-label="Remove attachment"
+            title="Remove attachment"
           >
-            Remove
+            ×
           </button>
         </div>
       ) : null}
@@ -74,11 +82,10 @@ export function ChatComposer({
         />
         <button
           type="button"
-          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full border bg-surface text-ink hover:bg-bg ${
-            stagedFile
+          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full border bg-surface text-ink hover:bg-bg ${stagedFile
               ? 'border-accent text-accent ring-1 ring-accent/40'
               : 'border-border'
-          }`}
+            }`}
           title="Attach GeoTIFF or benchmark image"
           onClick={() => fileRef.current?.click()}
           disabled={busy}
