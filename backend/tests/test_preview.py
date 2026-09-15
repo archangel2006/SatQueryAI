@@ -48,3 +48,39 @@ def test_preview_rejects_bad_extension() -> None:
         files={"file": ("notes.txt", b"hello", "text/plain")},
     )
     assert res.status_code == 400
+
+
+def test_preview_identifies_dual_polarization_sar(
+    sample_dual_polarization_sar_geotiff_bytes: bytes,
+) -> None:
+    res = client.post(
+        "/preview",
+        files={
+            "file": (
+                "dual_polarization.tif",
+                sample_dual_polarization_sar_geotiff_bytes,
+                "image/tiff",
+            )
+        },
+    )
+
+    assert res.status_code == 200
+    assert res.json()["metadata"]["modality_guess"] == "sar"
+
+
+def test_preview_preserves_multiband_sar_classification(
+    sample_multiband_sar_geotiff_bytes: bytes,
+) -> None:
+    res = client.post(
+        "/preview",
+        files={
+            "file": (
+                "sentinel1_product.tif",
+                sample_multiband_sar_geotiff_bytes,
+                "image/tiff",
+            )
+        },
+    )
+
+    assert res.status_code == 200
+    assert res.json()["metadata"]["modality_guess"] == "sar"

@@ -40,6 +40,17 @@ class FusionResponse(BaseModel):
     evidence: dict[str, Any] = Field(default_factory=dict)
 
 
+class FusionFollowUpRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=4000)
+    specialist_summary: str = Field(min_length=1, max_length=12000)
+    evidence: dict[str, Any] = Field(default_factory=dict)
+
+
+class FusionFollowUpResponse(BaseModel):
+    text: str
+    provider: str
+
+
 class ChangeResponse(BaseModel):
     text: str
     overlay_png_base64: str | None = None

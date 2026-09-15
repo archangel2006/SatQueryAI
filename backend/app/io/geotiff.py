@@ -36,6 +36,15 @@ def _percentile_stretch(band: np.ndarray, lo: float = 2.0, hi: float = 98.0) -> 
 
 
 def _sar_log_preview(band: np.ndarray) -> np.ndarray:
+    """Make a view-only SAR preview without changing model input values.
+
+    S1S2-Water stores Sentinel-1 as scaled negative dB. Those values have
+    already been logarithmically transformed, so applying log10 again turns
+    every pixel into the same near-zero value (a black image).
+    """
+    finite = band[np.isfinite(band)]
+    if finite.size and np.median(finite) < 0:
+        return _percentile_stretch(band.astype(np.float64))
     eps = 1e-6
     log = 10.0 * np.log10(np.maximum(band.astype(np.float64), 0) + eps)
     return _percentile_stretch(log)

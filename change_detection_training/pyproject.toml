@@ -8,9 +8,6 @@ version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = ["torch", "torchvision", "pillow", "numpy"]
 
-[tool.setuptools]
-package-dir = {"": ".."}
-
 [tool.setuptools.packages.find]
 where = [".."]
 include = ["change_detection_training*"]

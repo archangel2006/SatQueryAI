@@ -63,6 +63,88 @@ def sample_geotiff_bytes() -> bytes:
 
 
 @pytest.fixture
+def sample_sar_geotiff_bytes() -> bytes:
+    import rasterio
+    from rasterio.transform import from_origin
+
+    height, width = 48, 64
+    yy, xx = np.mgrid[0:height, 0:width]
+    data = (0.1 + (xx + yy) / 1000).astype(np.float32)[None, ...]
+    transform = from_origin(77.0, 29.0, 0.001, 0.001)
+    buf = io.BytesIO()
+    profile = {
+        "driver": "GTiff",
+        "height": height,
+        "width": width,
+        "count": 1,
+        "dtype": "float32",
+        "crs": "EPSG:4326",
+        "transform": transform,
+    }
+    with rasterio.open(buf, "w", **profile) as dst:
+        dst.write(data)
+    return buf.getvalue()
+
+
+@pytest.fixture
+def sample_dual_polarization_sar_geotiff_bytes() -> bytes:
+    import rasterio
+    from rasterio.transform import from_origin
+
+    height, width = 48, 64
+    yy, xx = np.mgrid[0:height, 0:width]
+    data = np.stack(
+        [0.1 + (xx + yy) / 1000, 0.2 + (xx * 2 + yy) / 1000],
+        axis=0,
+    ).astype(np.float32)
+    transform = from_origin(77.0, 29.0, 0.001, 0.001)
+    buf = io.BytesIO()
+    profile = {
+        "driver": "GTiff",
+        "height": height,
+        "width": width,
+        "count": 2,
+        "dtype": "float32",
+        "crs": "EPSG:4326",
+        "transform": transform,
+    }
+    with rasterio.open(buf, "w", **profile) as dst:
+        dst.write(data)
+        dst.set_band_description(1, "VV")
+        dst.set_band_description(2, "VH")
+    return buf.getvalue()
+
+
+@pytest.fixture
+def sample_multiband_sar_geotiff_bytes() -> bytes:
+    import rasterio
+    from rasterio.transform import from_origin
+
+    height, width = 24, 32
+    yy, xx = np.mgrid[0:height, 0:width]
+    data = np.stack(
+        [0.1 + (xx + yy) / 1000, 0.2 + (xx * 2 + yy) / 1000, 0.3 + yy / 1000],
+        axis=0,
+    ).astype(np.float32)
+    buf = io.BytesIO()
+    profile = {
+        "driver": "GTiff",
+        "height": height,
+        "width": width,
+        "count": 3,
+        "dtype": "float32",
+        "crs": "EPSG:4326",
+        "transform": from_origin(77.0, 29.0, 0.001, 0.001),
+    }
+    with rasterio.open(buf, "w", **profile) as dst:
+        dst.write(data)
+        dst.set_band_description(1, "VV")
+        dst.set_band_description(2, "VH")
+        dst.set_band_description(3, "incidence angle")
+    return buf.getvalue()
+
+
+@pytest.fixture
 def memory_storage() -> MemoryStorage:
     store = MemoryStorage()
     set_storage(store)

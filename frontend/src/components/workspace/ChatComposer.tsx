@@ -11,6 +11,7 @@ type ChatComposerProps = {
   onClearStaged: () => void
   disabled?: boolean
   busy?: boolean
+  allowAttachments?: boolean
 }
 
 export function ChatComposer({
@@ -23,6 +24,7 @@ export function ChatComposer({
   onClearStaged,
   disabled,
   busy,
+  allowAttachments = true,
 }: ChatComposerProps) {
   const fileRef = useRef<HTMLInputElement>(null)
   const canSend = Boolean(value.trim()) && !disabled && !busy
@@ -37,7 +39,7 @@ export function ChatComposer({
       onSubmit={handleSubmit}
       className="border-t border-border bg-bg px-3 py-3"
     >
-      {stagedFile ? (
+      {allowAttachments && stagedFile ? (
         <div className="mb-2 inline-flex max-w-[220px] items-center gap-2 rounded-xl border border-border bg-surface px-2 py-2 shadow-sm">
           {stagedPreviewUrl ? (
             <img
@@ -69,7 +71,7 @@ export function ChatComposer({
         </div>
       ) : null}
       <div className="flex items-end gap-2">
-        <input
+        {allowAttachments ? <input
           ref={fileRef}
           type="file"
           accept=".tif,.tiff,.png,.jpg,.jpeg,image/tiff,image/png,image/jpeg"
@@ -79,8 +81,8 @@ export function ChatComposer({
             if (file) onStageFile(file)
             e.target.value = ''
           }}
-        />
-        <button
+        /> : null}
+        {allowAttachments ? <button
           type="button"
           className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full border bg-surface text-ink hover:bg-bg ${stagedFile
               ? 'border-accent text-accent ring-1 ring-accent/40'
@@ -91,21 +93,21 @@ export function ChatComposer({
           disabled={busy}
         >
           <PaperclipIcon />
-        </button>
-        <button
+        </button> : null}
+        {allowAttachments ? <button
           type="button"
           className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-border bg-surface text-muted opacity-60"
           title="Voice questions — coming soon"
           disabled
         >
           <MicIcon />
-        </button>
+        </button> : null}
         <textarea
           value={value}
           onChange={(e) => onChange(e.target.value)}
           rows={2}
           placeholder={
-            stagedFile
+            allowAttachments && stagedFile
               ? 'Ask about this scene…'
               : 'Ask about water, fields, buildings…'
           }

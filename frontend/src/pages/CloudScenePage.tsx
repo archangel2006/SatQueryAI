@@ -3,271 +3,195 @@ import { Navigate } from 'react-router-dom'
 import { SignedIn, SignedOut } from '@clerk/clerk-react'
 import { Button } from '../components/Button'
 import { Navbar } from '../components/Navbar'
-import {
-  postFusion,
-  postPreview,
-  previewToObjectUrl,
-  type FusionResponse,
-  type ImageMetadata,
-} from '../lib/api'
+import { ChatPanel } from '../components/workspace/ChatPanel'
+import type { ChatMessageData } from '../components/workspace/ChatMessage'
+import { SessionSidebar } from '../components/workspace/SessionSidebar'
+import { SplitWorkspace } from '../components/workspace/SplitWorkspace'
+import type { WorkspaceMode } from '../components/workspace/splitState'
+import { postFusion, postFusionFollowUp, postPreview, previewToObjectUrl, type ImageMetadata, type SessionListItem } from '../lib/api'
 import { ROUTES } from '../routes'
 
 type SlotKey = 'optical' | 'sar'
+type View = 'optical' | 'sar' | 'overlay'
+type SceneSlot = { file: File | null; previewUrl: string | null; metadata: ImageMetadata | null }
+type FusionContext = { summary: string; evidence: Record<string, unknown> }
+type FusionHistory = { id: string; title: string; messages: ChatMessageData[]; context: FusionContext | null; updatedAt: string }
 
-type SceneSlot = {
-  file: File | null
-  previewUrl: string | null
-  metadata: ImageMetadata | null
-}
+const HISTORY_KEY = 'satquery.opticalSarHistory'
 
 const EMPTY_SLOT: SceneSlot = { file: null, previewUrl: null, metadata: null }
-
-function UploadSlot({
-  label,
-  hint,
-  slot,
-  busy,
-  onFile,
-}: {
-  label: string
-  hint: string
-  slot: SceneSlot
-  busy: boolean
-  onFile: (file: File) => void
-}) {
-  const inputRef = useRef<HTMLInputElement>(null)
-
-  return (
-    <div className="flex min-w-0 flex-1 flex-col gap-3 rounded-lg border border-dashed border-border bg-bg p-4">
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-xs font-semibold uppercase tracking-wide text-ink">{label}</p>
-          <p className="mt-1 text-xs text-muted">{hint}</p>
-        </div>
-        <Button
-          variant="secondary"
-          className="shrink-0 text-xs"
-          disabled={busy}
-          onClick={() => inputRef.current?.click()}
-        >
-          Choose file
-        </Button>
-      </div>
-      <input
-        ref={inputRef}
-        type="file"
-        accept=".tif,.tiff,.png,.jpg,.jpeg,image/tiff,image/png,image/jpeg"
-        className="sr-only"
-        onChange={(event) => {
-          const file = event.target.files?.[0]
-          if (file) onFile(file)
-          event.target.value = ''
-        }}
-      />
-      <div className="flex h-64 min-h-44 items-center justify-center overflow-hidden rounded-md border border-border bg-surface">
-        {slot.previewUrl ? (
-          <img
-            src={slot.previewUrl}
-            alt={`${label} preview`}
-            className="h-full max-h-56 w-full object-contain"
-          />
-        ) : (
-          <p className="px-4 text-center text-xs text-muted">Preview appears here</p>
-        )}
-      </div>
-      <div className="flex items-center justify-between gap-2 text-[11px] text-muted">
-        <span className="truncate">{slot.file?.name ?? 'No file selected'}</span>
-        {slot.metadata ? (
-          <span className="shrink-0 text-right">
-            {slot.metadata.modality_guess} · {slot.metadata.width} × {slot.metadata.height}
-          </span>
-        ) : null}
-      </div>
-    </div>
-  )
+const WELCOME: ChatMessageData = {
+  id: 'welcome', role: 'assistant',
+  text: 'Upload a six-band **Sentinel-2** GeoTIFF and a two-band **Sentinel-1 VV/VH** GeoTIFF in the renderer, then ask about water. The segmentation model is used first.',
 }
 
-function Evidence({ result }: { result: FusionResponse }) {
-  const evidence = result.evidence
-  const rows = [
-    ['Water-like area', evidence.water_pct, '%'],
-    ['Built-up-like area', evidence.built_up_pct, '%'],
-    ['Modality agreement', evidence.modality_agreement, ''],
-    ['Valid pixels', evidence.valid_pct, '%'],
-  ] as const
+function readHistory(): FusionHistory[] {
+  try {
+    const value = JSON.parse(localStorage.getItem(HISTORY_KEY) ?? '[]') as FusionHistory[]
+    return Array.isArray(value) ? value : []
+  } catch { return [] }
+}
 
-  return (
-    <div className="grid gap-3 sm:grid-cols-2">
-      {rows.map(([label, value, suffix]) => (
-        <div key={label} className="rounded-md border border-border bg-bg px-3 py-2">
-          <p className="text-[11px] text-muted">{label}</p>
-          <p className="mt-1 text-sm font-semibold text-ink">
-            {typeof value === 'number' ? `${value.toFixed(1)}${suffix}` : 'Unavailable'}
-          </p>
-        </div>
-      ))}
+function withoutAttachments(messages: ChatMessageData[]): ChatMessageData[] {
+  return messages.map(({ attachment: _attachment, attachments: _attachments, ...message }) => message)
+}
+
+function UploadSlot({ label, hint, slot, busy, onFile, isSar = false, showSarPreview = true, onToggleSarPreview }: {
+  label: string; hint: string; slot: SceneSlot; busy: boolean; onFile: (file: File) => void
+  isSar?: boolean; showSarPreview?: boolean; onToggleSarPreview?: () => void
+}) {
+  const inputRef = useRef<HTMLInputElement>(null)
+  const showPreview = slot.previewUrl && (!isSar || showSarPreview)
+  return <div className="flex min-w-0 flex-1 flex-col gap-3 rounded-lg border border-dashed border-border bg-bg p-4">
+    <div className="flex items-center justify-between gap-3"><div className="min-w-0"><p className="text-xs font-semibold uppercase tracking-wide text-ink">{label}</p><p className="mt-1 text-xs text-muted">{hint}</p></div><Button variant="secondary" className="shrink-0 text-xs" disabled={busy} onClick={() => inputRef.current?.click()}>Choose file</Button></div>
+    <input ref={inputRef} type="file" accept=".tif,.tiff,.png,.jpg,.jpeg,image/tiff,image/png,image/jpeg" className="sr-only" onChange={(event) => { const file = event.target.files?.[0]; if (file) onFile(file); event.target.value = '' }} />
+    <div className="flex h-44 items-center justify-center overflow-hidden rounded-md border border-border bg-surface">
+      {showPreview ? <button type="button" className="h-full w-full" onClick={isSar ? onToggleSarPreview : undefined} title={isSar ? 'Show GeoTIFF details' : undefined}><img src={slot.previewUrl!} alt={`${label} preview`} className="h-full w-full object-contain" /></button>
+        : slot.file && isSar ? <button type="button" className="h-full w-full px-4 text-center text-sm text-muted hover:bg-bg" onClick={onToggleSarPreview}><span className="block font-medium text-ink">SAR GeoTIFF selected</span><span className="mt-1 block text-xs">Click to reveal its rendered PNG preview</span></button>
+          : <p className="px-4 text-center text-xs text-muted">Preview appears here</p>}
     </div>
-  )
+    <div className="flex items-center justify-between gap-2 text-[11px] text-muted"><span className="truncate">{slot.file?.name ?? 'No file selected'}</span>{slot.metadata ? <span className="shrink-0">{slot.metadata.width} × {slot.metadata.height}</span> : null}</div>
+    {isSar && slot.previewUrl ? <Button variant="secondary" className="self-start text-xs" onClick={onToggleSarPreview}>{showSarPreview ? 'Show GeoTIFF details' : 'View rendered SAR PNG'}</Button> : null}
+  </div>
+}
+
+function FusionRenderer({ optical, sar, overlayUrl, busySlot, busy, showSarPreview, view, onViewChange, onOpticalFile, onSarFile, onToggleSarPreview }: {
+  optical: SceneSlot; sar: SceneSlot; overlayUrl: string | null; busySlot: SlotKey | null; busy: boolean; showSarPreview: boolean; view: View
+  onViewChange: (view: View) => void; onOpticalFile: (file: File) => void; onSarFile: (file: File) => void; onToggleSarPreview: () => void
+}) {
+  const imageUrl = view === 'overlay' ? overlayUrl : view === 'sar' ? sar.previewUrl : optical.previewUrl
+  const title = view === 'overlay' ? 'Water segmentation mask' : view === 'sar' ? 'Rendered Sentinel-1 preview' : 'Sentinel-2 preview'
+  return <div className="flex h-full min-h-0 flex-col bg-surface">
+    <header className="flex flex-wrap items-center gap-2 border-b border-border bg-bg px-4 py-3"><div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold text-ink">OPTICAL_SAR // WATER_SEGMENTATION</p><p className="text-[11px] text-muted">Model-first fusion workspace</p></div><div className="flex rounded-md border border-border bg-surface p-0.5 text-xs">{(['optical', 'sar', 'overlay'] as const).map((item) => <button key={item} type="button" onClick={() => onViewChange(item)} className={`rounded px-2 py-1 capitalize ${view === item ? 'bg-accent text-white dark:text-navy' : 'text-muted hover:text-ink'}`}>{item}</button>)}</div></header>
+    <div className="min-h-0 flex-1 overflow-y-auto p-4"><div className="grid gap-3 sm:grid-cols-2"><UploadSlot label="Optical image" hint="S2: B02, B03, B04, B08, B11, B12" slot={optical} busy={busy || busySlot === 'optical'} onFile={onOpticalFile} /><UploadSlot label="SAR image" hint="S1: VV and VH GeoTIFF" slot={sar} busy={busy || busySlot === 'sar'} onFile={onSarFile} isSar showSarPreview={showSarPreview} onToggleSarPreview={onToggleSarPreview} /></div>
+      <div className="mt-4 overflow-hidden rounded-lg border border-border bg-bg"><div className="flex items-center justify-between border-b border-border px-3 py-2"><div><p className="text-xs font-semibold text-ink">{title}</p><p className="text-[11px] text-muted">Blue: model water · Light blue: near-threshold model probability · Red: secondary built-up cue · Yellow: overlap.</p></div>{view === 'overlay' && overlayUrl ? <a className="text-xs text-accent" href={overlayUrl} download="water-mask.png">Download</a> : null}</div><div className="flex h-72 items-center justify-center bg-black/5 p-3 dark:bg-black/30">{imageUrl ? <img src={imageUrl} alt={title} className="h-full w-full object-contain" /> : <p className="text-sm text-muted">Upload both inputs and send a message to produce a water mask.</p>}</div></div>
+    </div>
+  </div>
 }
 
 function CloudSceneWorkspace() {
   const [optical, setOptical] = useState<SceneSlot>(EMPTY_SLOT)
   const [sar, setSar] = useState<SceneSlot>(EMPTY_SLOT)
-  const [query, setQuery] = useState('Identify water and built-up regions using both images.')
-  const [result, setResult] = useState<FusionResponse | null>(null)
+  const [messages, setMessages] = useState<ChatMessageData[]>([WELCOME])
+  const [draft, setDraft] = useState('Identify water regions using both images.')
+  const [mode, setMode] = useState<WorkspaceMode>('split')
+  const [rightPanelOpen, setRightPanelOpen] = useState(true)
   const [overlayUrl, setOverlayUrl] = useState<string | null>(null)
+  const [activeAttachmentId, setActiveAttachmentId] = useState<string | null>(null)
+  const [view, setView] = useState<View>('optical')
   const [busySlot, setBusySlot] = useState<SlotKey | null>(null)
   const [analyzing, setAnalyzing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [showSarPreview, setShowSarPreview] = useState(false)
+  const [fusionContext, setFusionContext] = useState<FusionContext | null>(null)
+  const [history, setHistory] = useState<FusionHistory[]>(readHistory)
+  const [activeHistoryId, setActiveHistoryId] = useState<string | null>(null)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+
+  useEffect(() => () => { if (optical.previewUrl) URL.revokeObjectURL(optical.previewUrl); if (sar.previewUrl) URL.revokeObjectURL(sar.previewUrl); if (overlayUrl) URL.revokeObjectURL(overlayUrl) }, [optical.previewUrl, sar.previewUrl, overlayUrl])
 
   useEffect(() => {
-    return () => {
-      if (optical.previewUrl) URL.revokeObjectURL(optical.previewUrl)
-      if (sar.previewUrl) URL.revokeObjectURL(sar.previewUrl)
-      if (overlayUrl) URL.revokeObjectURL(overlayUrl)
-    }
-  }, [optical.previewUrl, sar.previewUrl, overlayUrl])
+    try { localStorage.setItem(HISTORY_KEY, JSON.stringify(history)) } catch { /* storage is optional */ }
+  }, [history])
+
+  useEffect(() => {
+    if (!activeHistoryId) return
+    setHistory((previous) => previous.map((item) => item.id === activeHistoryId ? {
+      ...item,
+      title: messages.find((message) => message.role === 'user')?.text.slice(0, 80) || 'Optical + SAR chat',
+      messages: withoutAttachments(messages),
+      context: fusionContext,
+      updatedAt: new Date().toISOString(),
+    } : item))
+  }, [activeHistoryId, fusionContext, messages])
+
+  function ensureHistory() {
+    if (activeHistoryId) return
+    const id = crypto.randomUUID()
+    setActiveHistoryId(id)
+    setHistory((previous) => [{ id, title: 'Optical + SAR chat', messages: [WELCOME], context: null, updatedAt: new Date().toISOString() }, ...previous])
+  }
+
+  function newChat() {
+    setActiveHistoryId(null)
+    setMessages([WELCOME])
+    setFusionContext(null)
+    setOverlayUrl(null)
+    setActiveAttachmentId(null)
+    setError(null)
+  }
+
+  function selectHistory(id: string) {
+    const item = history.find((entry) => entry.id === id)
+    if (!item) return
+    setActiveHistoryId(item.id)
+    setMessages(item.messages.length ? item.messages : [WELCOME])
+    setFusionContext(item.context)
+    setOverlayUrl(null)
+    setActiveAttachmentId(null)
+    setView('optical')
+  }
+
+  function deleteHistory(id: string) {
+    setHistory((previous) => previous.filter((entry) => entry.id !== id))
+    if (activeHistoryId === id) newChat()
+  }
 
   async function chooseFile(kind: SlotKey, file: File) {
-    setBusySlot(kind)
-    setError(null)
+    setBusySlot(kind); setError(null); setFusionContext(null)
     try {
       const preview = await postPreview(file)
-      const nextSlot = {
-        file,
-        previewUrl: previewToObjectUrl(preview.preview_png_base64),
-        metadata: preview.metadata,
-      }
-      if (kind === 'optical') setOptical(nextSlot)
-      else setSar(nextSlot)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not preview image')
-    } finally {
-      setBusySlot(null)
-    }
+      const nextSlot = { file, previewUrl: previewToObjectUrl(preview.preview_png_base64), metadata: preview.metadata }
+      if (kind === 'optical') { setOptical(nextSlot); setView('optical') } else { setSar(nextSlot); setShowSarPreview(false); setView('sar') }
+    } catch (err) { setError(err instanceof Error ? err.message : 'Could not preview image') } finally { setBusySlot(null) }
   }
 
-  async function analyze() {
-    if (!optical.file || !sar.file) {
-      setError('Choose both an optical image and a SAR image first.')
-      return
-    }
-    setAnalyzing(true)
-    setError(null)
+  async function send() {
+    const question = draft.trim() || 'Identify water regions using both images.'
+    const opticalFile = optical.file
+    const sarFile = sar.file
+    if (!fusionContext && (!opticalFile || !sarFile)) { setError('Upload both the optical and SAR GeoTIFFs in the renderer first.'); return }
+    ensureHistory()
+    setMessages((previous) => [...previous.filter((message) => message.id !== 'welcome'), { id: `user-${Date.now()}`, role: 'user', text: question }])
+    setDraft(''); setAnalyzing(true); setError(null)
     try {
-      const nextResult = await postFusion(optical.file, sar.file, query)
+      if (fusionContext) {
+        const followUp = await postFusionFollowUp(question, fusionContext.summary, fusionContext.evidence)
+        setMessages((previous) => [...previous, { id: `assistant-${Date.now()}`, role: 'assistant', text: `**Gemini follow-up**\n\n${followUp.text}` }])
+        return
+      }
+      const result = await postFusion(opticalFile!, sarFile!, question)
       if (overlayUrl) URL.revokeObjectURL(overlayUrl)
-      setOverlayUrl(
-        nextResult.overlay_png_base64
-          ? previewToObjectUrl(nextResult.overlay_png_base64)
-          : null,
-      )
-      setResult(nextResult)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Fusion failed')
-    } finally {
-      setAnalyzing(false)
-    }
+      const nextOverlayUrl = result.overlay_png_base64 ? previewToObjectUrl(result.overlay_png_base64) : null
+      setOverlayUrl(nextOverlayUrl); setView(nextOverlayUrl ? 'overlay' : 'optical')
+      const segmentation = result.evidence.water_segmentation as { available?: boolean; confidence?: number } | undefined
+      const modelUsed = segmentation?.available === true
+      const waterPct = typeof result.evidence.water_pct === 'number' ? result.evidence.water_pct.toFixed(1) : 'unavailable'
+      const confidence = typeof segmentation?.confidence === 'number' ? segmentation.confidence.toFixed(2) : result.score?.toFixed(2) ?? 'unavailable'
+      const reply = modelUsed ? `**OpticalSarFusionSegmenter** (primary water model)\n\n${result.text}\n\n**Water coverage:** ${waterPct}%  |  **Confidence:** ${confidence}` : `**Optical/SAR heuristic fallback**\n\n${result.text}\n\n**Water-like coverage:** ${waterPct}%  |  **Confidence:** ${confidence}`
+      setFusionContext({ summary: result.text, evidence: result.evidence })
+      const attachmentId = nextOverlayUrl ? `water-mask-${Date.now()}` : undefined
+      if (attachmentId) setActiveAttachmentId(attachmentId)
+      setMessages((previous) => [...previous, { id: `assistant-${Date.now()}`, role: 'assistant', text: reply, confidence: result.score ?? undefined, ...(nextOverlayUrl && attachmentId ? { attachment: { id: attachmentId, url: nextOverlayUrl, filename: 'water-segmentation-mask.png' } } : {}) }])
+    } catch (err) { setDraft(question); setError(err instanceof Error ? err.message : 'Fusion failed') } finally { setAnalyzing(false) }
   }
 
-  return (
-    <div className="min-h-screen bg-bg text-ink">
-      <Navbar />
-      <main className="mx-auto max-w-6xl px-6 py-8">
-        <div className="max-w-3xl">
-          <p className="text-xs font-semibold uppercase tracking-widest text-accent">Optical + SAR</p>
-          <h1 className="mt-2 font-display text-3xl font-bold">See through cloud</h1>
-          <p className="mt-3 text-sm leading-relaxed text-muted">
-            Pair optical context with radar structure, then inspect the evidence produced by the fusion baseline.
-          </p>
-        </div>
+  const historySessions: SessionListItem[] = [...history]
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    .map((item) => ({ id: item.id, title: item.title, job_type: 'optical_sar', created_at: item.updatedAt, updated_at: item.updatedAt }))
 
-        <section className="mt-8 grid gap-4 lg:grid-cols-2">
-          <UploadSlot
-            label="Optical image"
-            hint="GeoTIFF preferred; PNG/JPEG accepted for practice"
-            slot={optical}
-            busy={busySlot === 'optical' || analyzing}
-            onFile={(file) => void chooseFile('optical', file)}
-          />
-          <UploadSlot
-            label="SAR image"
-            hint="Single-band SAR GeoTIFF with matching dimensions"
-            slot={sar}
-            busy={busySlot === 'sar' || analyzing}
-            onFile={(file) => void chooseFile('sar', file)}
-          />
-        </section>
-
-        <section className="mt-4 border-y border-border py-4">
-          <label htmlFor="fusion-query" className="text-xs font-semibold uppercase tracking-wide text-ink">
-            Analysis question
-          </label>
-          <div className="mt-2 flex flex-col gap-3 sm:flex-row">
-            <textarea
-              id="fusion-query"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              rows={2}
-              className="min-h-12 flex-1 resize-y rounded-md border border-border bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-accent"
-            />
-            <Button
-              variant="primary"
-              className="shrink-0 self-end bg-accent text-white hover:opacity-90 dark:text-navy"
-              disabled={analyzing || busySlot !== null}
-              onClick={() => void analyze()}
-            >
-              {analyzing ? 'Analyzing…' : 'Run fusion'}
-            </Button>
-          </div>
-        </section>
-
-        {error ? <p className="mt-4 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p> : null}
-
-        {result ? (
-          <section className="mt-8 grid gap-5 lg:grid-cols-[minmax(0,1.25fr)_minmax(18rem,0.75fr)]">
-            <div className="overflow-hidden rounded-lg border border-border bg-surface">
-              <div className="flex items-center justify-between border-b border-border px-4 py-3">
-                <div>
-                  <h2 className="text-sm font-semibold text-ink">Fused evidence overlay</h2>
-                  <p className="text-xs text-muted">Blue: water-like · red: built-up-like</p>
-                </div>
-                {overlayUrl ? (
-                  <a href={overlayUrl} download="satquery-fusion-overlay.png" className="text-xs font-medium text-accent">
-                    Download overlay
-                  </a>
-                ) : null}
-              </div>
-              <div className="flex h-96 min-h-72 items-center justify-center bg-[#0a1220]/5 p-5 dark:bg-black/30">
-                {overlayUrl ? <img src={overlayUrl} alt="Optical-SAR fusion overlay" className="h-full w-full object-contain" /> : <p className="text-sm text-muted">No overlay returned.</p>}
-              </div>
-            </div>
-            <div className="rounded-lg border border-border bg-surface p-4">
-              <div className="flex items-start justify-between gap-3">
-                <h2 className="text-sm font-semibold text-ink">Specialist result</h2>
-                <span className="text-xs text-muted">Score {result.score == null ? '—' : result.score.toFixed(2)}</span>
-              </div>
-              <p className="mt-3 text-sm leading-relaxed text-ink">{result.text}</p>
-              <div className="mt-5">
-                <Evidence result={result} />
-              </div>
-            </div>
-          </section>
-        ) : null}
-      </main>
+  return <div className="flex h-screen flex-col bg-[#030712] text-slate-100"><Navbar />
+    <div className="flex items-center justify-between border-b border-slate-800 bg-[#080E1A] px-4 py-2 text-xs font-mono text-slate-300"><span className="rounded border border-cyan-500/30 bg-cyan-500/10 px-2 py-0.5 text-cyan-300">TASK: OPTICAL_SAR_WATER</span><span className="text-slate-400">MODEL: <span className="text-emerald-400">OpticalSarFusionSegmenter</span></span></div>
+    {error ? <p className="mx-4 mt-3 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p> : null}
+    <div className="flex min-h-0 flex-1"><SessionSidebar sessions={historySessions} activeSessionId={activeHistoryId} collapsed={sidebarCollapsed} onCollapsedChange={setSidebarCollapsed} onNewChat={newChat} onSelect={selectHistory} onDelete={deleteHistory} busy={analyzing || busySlot !== null} />
+      <div className="min-h-0 min-w-0 flex-1"><SplitWorkspace mode={mode} onModeChange={setMode} rightPanelOpen={rightPanelOpen} onRightPanelToggle={() => setRightPanelOpen((open) => !open)}
+      chat={<ChatPanel messages={messages} draft={draft} onDraftChange={setDraft} onSend={() => void send()} stagedFile={null} stagedPreviewUrl={null} onStageFile={() => undefined} onClearStaged={() => undefined} activeAttachmentId={activeAttachmentId} onSelectAttachment={(id) => { setActiveAttachmentId((active) => active === id ? null : id); setView('overlay') }} busy={analyzing || busySlot !== null} analysisLoading={analyzing} title="Ask optical + SAR" subtitle={optical.file && sar.file ? 'Both inputs loaded — every message runs the water model' : 'Upload the two GeoTIFFs in the renderer first'} allowAttachments={false} />}
+      renderer={<FusionRenderer optical={optical} sar={sar} overlayUrl={overlayUrl} busySlot={busySlot} busy={analyzing} showSarPreview={showSarPreview} view={view} onViewChange={setView} onOpticalFile={(file) => void chooseFile('optical', file)} onSarFile={(file) => void chooseFile('sar', file)} onToggleSarPreview={() => setShowSarPreview((visible) => !visible)} />}
+      /></div>
     </div>
-  )
+  </div>
 }
 
 export function CloudScenePage() {
-  return (
-    <>
-      <SignedOut>
-        <Navigate to={ROUTES.signIn} replace />
-      </SignedOut>
-      <SignedIn>
-        <CloudSceneWorkspace />
-      </SignedIn>
-    </>
-  )
+  return <><SignedOut><Navigate to={ROUTES.signIn} replace /></SignedOut><SignedIn><CloudSceneWorkspace /></SignedIn></>
 }

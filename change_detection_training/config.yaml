@@ -1,6 +1,6 @@
 # LEVIR-CD Bi-Temporal Change Detection — Training Configuration
 
-dataset_root: /content/LEVIR-CD
+dataset_root: /content/LEVIR-CD-clean
 checkpoint_dir: /content/drive/MyDrive/SatQueryAI_work/checkpoints
 
 # Input

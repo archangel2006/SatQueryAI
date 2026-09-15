@@ -1,0 +1,4 @@
+# Optional local model inference dependencies. Install only when deploying
+# the change-detection or Optical+SAR water-segmentation checkpoints.
+torch>=2.2.0
+-e ../change_detection_training

@@ -22,6 +22,11 @@ export type FusionResponse = {
   evidence: Record<string, unknown>
 }
 
+export type FusionFollowUpResponse = {
+  text: string
+  provider: 'gemini'
+}
+
 export type ChangeResponse = {
   text: string
   overlay_png_base64: string | null
@@ -177,6 +182,20 @@ export async function postFusion(
   })
   if (!res.ok) throw new Error(await readError(res, 'Fusion failed'))
   return (await res.json()) as FusionResponse
+}
+
+export async function postFusionFollowUp(
+  query: string,
+  specialistSummary: string,
+  evidence: Record<string, unknown>,
+): Promise<FusionFollowUpResponse> {
+  const res = await fetch(`${API_URL}/fusion/follow-up`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query, specialist_summary: specialistSummary, evidence }),
+  })
+  if (!res.ok) throw new Error(await readError(res, 'Gemini follow-up failed'))
+  return (await res.json()) as FusionFollowUpResponse
 }
 
 export async function postChange(

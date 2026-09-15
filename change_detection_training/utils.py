@@ -29,7 +29,7 @@ def set_seed(seed: int = 42) -> None:
 def load_config(path: str | Path | None = None) -> dict[str, Any]:
     """Load config.yaml.  Falls back to built-in defaults if file not found."""
     defaults: dict[str, Any] = {
-        "dataset_root":   "/content/LEVIR-CD",
+        "dataset_root":   "/content/LEVIR-CD-clean",
         "checkpoint_dir": "/content/drive/MyDrive/bi_temporal_change/checkpoints",
         "image_size":     256,
         "batch_size":     8,

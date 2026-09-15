@@ -9,6 +9,7 @@ def check_compatibility(
     files: list[tuple[str, bytes]],
     *,
     ordered_modalities: bool = False,
+    allow_geospatial_alignment: bool = False,
 ) -> CompatibilityResult:
     """Hard gate before any model call. Never raises for validation failures."""
     if job == "ask_scene":
@@ -73,7 +74,11 @@ def check_compatibility(
             )
 
         dimensions = {(item.width, item.height) for item in metadata}
-        if len(dimensions) != 1:
+        can_align = (
+            allow_geospatial_alignment
+            and all(item.format_kind == "geotiff" and item.crs for item in metadata)
+        )
+        if len(dimensions) != 1 and not can_align:
             return CompatibilityResult(
                 valid=False,
                 error=(
@@ -95,6 +100,7 @@ def check_compatibility(
                 "files": [item.model_dump() for item in metadata],
                 "modalities": output_modalities,
                 "detected_modalities": modalities,
+                "geospatial_alignment_required": len(dimensions) != 1,
             },
         )
 

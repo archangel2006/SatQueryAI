@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -8,9 +9,12 @@ import numpy as np
 from PIL import Image
 
 from app.specialists.optical_sar.learned_fusion import LearnedFusion
+from app.specialists.optical_sar.segmentation import WaterSegmentationAdapter
 
 
 _learned_fusion: LearnedFusion | None = None
+_water_segmentation: WaterSegmentationAdapter | None = None
+logger = logging.getLogger(__name__)
 
 
 def configure_learned_fusion(checkpoint_path: str, device: str = "cpu") -> LearnedFusion:
@@ -18,6 +22,13 @@ def configure_learned_fusion(checkpoint_path: str, device: str = "cpu") -> Learn
     global _learned_fusion
     _learned_fusion = LearnedFusion(checkpoint_path, device)
     return _learned_fusion
+
+
+def configure_water_segmentation(checkpoint_path: str, device: str = "cpu") -> WaterSegmentationAdapter:
+    """Load the final S1/S2 water-segmentation checkpoint once for inference."""
+    global _water_segmentation
+    _water_segmentation = WaterSegmentationAdapter(checkpoint_path, device)
+    return _water_segmentation
 
 def _as_hwc(image: np.ndarray) -> np.ndarray:
     array = np.asarray(image, dtype=np.float32)
@@ -74,12 +85,32 @@ def _overlay_png(
     water_mask: np.ndarray,
     built_up_mask: np.ndarray,
     valid: np.ndarray,
+    optical_rgb: np.ndarray,
+    water_probability: np.ndarray | None = None,
 ) -> bytes:
-    overlay = np.zeros((*valid.shape, 3), dtype=np.uint8)
-    overlay[water_mask & valid] = (35, 120, 220)
-    overlay[built_up_mask & valid] = (220, 80, 45)
-    overlap = water_mask & built_up_mask & valid
-    overlay[overlap] = (220, 190, 35)
+    """Render labelled pixels over a viewable, contrast-stretched S2 base."""
+    overlay = np.clip(optical_rgb * 255.0, 0, 255).astype(np.uint8)
+    overlay[~valid] = (24, 30, 42)
+
+    # Keep colours intentionally saturated so the result remains readable at a
+    # glance. Blue is model water; red is the secondary heuristic built-up cue.
+    water = water_mask & valid
+    built_up = built_up_mask & valid
+
+    # A near-threshold probability tint makes a model that is uncertain (for
+    # example, 0.48-0.50 everywhere) visible without misrepresenting it as a
+    # binary water prediction. Solid blue remains reserved for the true mask.
+    if water_probability is not None:
+        uncertain = valid & ~water & ~built_up & (water_probability >= 0.42)
+        strength = np.clip((water_probability - 0.42) / 0.08, 0.0, 0.42)
+        current = overlay[uncertain].astype(np.float32)
+        cyan = np.array([55, 205, 255], dtype=np.float32)
+        alpha = strength[uncertain, None]
+        overlay[uncertain] = (current * (1.0 - alpha) + cyan * alpha).astype(np.uint8)
+    overlay[water] = (20, 120, 255)
+    overlay[built_up] = (240, 65, 55)
+    overlap = water & built_up
+    overlay[overlap] = (255, 205, 35)
     image = Image.fromarray(overlay, mode="RGB")
     output = io.BytesIO()
     image.save(output, format="PNG")
@@ -135,6 +166,20 @@ def run_fusion(
     water_mask = (water_score >= (optical_weight + sar_weight) * 0.55) & valid
     built_up_mask = (built_up_score >= (optical_weight + sar_weight) * 0.55) & valid
 
+    segmentation = None
+    if _water_segmentation is not None and isinstance(optical, (bytes, bytearray)) and isinstance(sar, (bytes, bytearray)):
+        segmentation = _water_segmentation.predict(bytes(optical), bytes(sar))
+        if segmentation is not None:
+            # The segmentation model is the authoritative water output. The
+            # separate built-up heuristic is retained only as a red overlay cue;
+            # it is never presented as model output or blended into its score.
+            water_mask = segmentation["water_mask"]
+        else:
+            logger.warning(
+                "Water-segmentation adapter unavailable for this request; using heuristic fallback: %s",
+                _water_segmentation.error,
+            )
+
     water_agreement = np.mean((water_optical == water_sar)[valid])
     built_up_agreement = np.mean((built_up_optical == built_up_sar)[valid])
     modality_agreement = float((water_agreement + built_up_agreement) / 2.0)
@@ -145,36 +190,66 @@ def run_fusion(
     learned = _learned_fusion.predict(optical, sar) if _learned_fusion else None
 
     subject = f" for query '{query.strip()}'" if query and query.strip() else ""
-    text = (
-        f"Optical and SAR evidence{subject}: approximately {water_pct:.1f}% "
-        f"water-like and {built_up_pct:.1f}% built-up-like area. "
-        f"Cloud estimate is {cloud_pct:.1f}%; modality agreement is {modality_agreement:.2f}."
-    )
-    if learned is not None:
+    if segmentation is not None:
+        text = (
+            f"Optical+SAR water segmentation{subject}: approximately {water_pct:.1f}% water. "
+            f"Segmentation confidence is {segmentation['confidence']:.2f}; cloud estimate is {cloud_pct:.1f}%."
+        )
+        score = segmentation["confidence"]
+    else:
+        text = (
+            f"Optical and SAR evidence{subject}: approximately {water_pct:.1f}% "
+            f"water-like and {built_up_pct:.1f}% built-up-like area. "
+            f"Cloud estimate is {cloud_pct:.1f}%; modality agreement is {modality_agreement:.2f}."
+        )
+    # The older scene classifier remains a compatible fallback. It must not
+    # dilute or contradict the pixel-level segmentation result when the water
+    # model loaded successfully.
+    if learned is not None and segmentation is None:
         learned_groups = learned["groups"]
         text += (
             f" Learned scene probabilities: water {learned_groups['water']:.2f}, "
             f"built-up {learned_groups['built_up']:.2f}."
         )
-        score = float(np.clip((score + max(learned_groups.values())) / 2.0, 0.0, 1.0))
+        if segmentation is None:
+            score = float(np.clip((score + max(learned_groups.values())) / 2.0, 0.0, 1.0))
     evidence = {
-        "method": "percentile-normalized optical/SAR evidence fusion",
+        "method": "OpticalSarFusionSegmenter water segmentation" if segmentation is not None else "percentile-normalized optical/SAR evidence fusion",
         "shape": list(optical_norm.shape[:2]),
         "water_pct": water_pct,
         "built_up_pct": built_up_pct,
+        "built_up_source": "secondary heuristic overlay" if segmentation is not None else "heuristic fusion",
         "optical_weight": optical_weight,
         "sar_weight": sar_weight,
         "modality_agreement": modality_agreement,
         "valid_pct": float(np.mean(valid) * 100.0),
         "metadata": metadata or {},
     }
-    if learned is not None:
+    if learned is not None and segmentation is None:
         evidence["learned_fusion"] = learned
     elif _learned_fusion is not None and _learned_fusion.error:
         evidence["learned_fusion"] = {"available": False, "error": _learned_fusion.error}
+    if segmentation is not None:
+        evidence["water_segmentation"] = {
+            "available": True,
+            "confidence": segmentation["confidence"],
+            "threshold": segmentation["threshold"],
+        }
+    elif _water_segmentation is not None:
+        evidence["water_segmentation"] = {
+            "available": False,
+            "error": _water_segmentation.error,
+        }
     return {
         "text": text,
-        "overlay": _overlay_png(water_mask, built_up_mask, valid),
+        "overlay": _overlay_png(
+            water_mask,
+            built_up_mask,
+            valid,
+            # Dataset order is B02, B03, B04, so render R/G/B as B04/B03/B02.
+            optical_norm[..., [2, 1, 0]] if optical_channels >= 3 else np.repeat(optical_norm[..., :1], 3, axis=-1),
+            segmentation["water_probability"] if segmentation is not None else None,
+        ),
         "cloud_pct": cloud_pct,
         "score": score,
         "evidence": evidence,

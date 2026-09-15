@@ -19,6 +19,7 @@ type ChatPanelProps = {
   analysisAction?: ReactNode
   title?: string
   subtitle?: string
+  allowAttachments?: boolean
 }
 
 export function ChatPanel({
@@ -37,6 +38,7 @@ export function ChatPanel({
   analysisAction,
   title = 'Ask this scene',
   subtitle = 'Attach a scene, ask a question, then Send',
+  allowAttachments = true,
 }: ChatPanelProps) {
   const endRef = useRef<HTMLDivElement>(null)
 
@@ -91,6 +93,7 @@ export function ChatPanel({
         stagedPreviewUrl={stagedPreviewUrl}
         onStageFile={onStageFile}
         onClearStaged={onClearStaged}
+        allowAttachments={allowAttachments}
         busy={busy}
       />
     </div>

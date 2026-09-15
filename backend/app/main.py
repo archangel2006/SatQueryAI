@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -16,12 +17,18 @@ from app.llm.gemini import FakeLLM, get_llm
 from app.schemas import (
     ChangeResponse,
     CompatibilityResult,
+    FusionFollowUpRequest,
+    FusionFollowUpResponse,
     FusionResponse,
     JobType,
     PreviewResponse,
 )
 from app.specialists.change_detection.change import configure_learned_change, run_change
-from app.specialists.optical_sar.fusion import configure_learned_fusion, run_fusion
+from app.specialists.optical_sar.fusion import (
+    configure_learned_fusion,
+    configure_water_segmentation,
+    run_fusion,
+)
 from fastapi import File, Form, HTTPException, UploadFile
 from app.models import Asset
 
@@ -58,6 +65,18 @@ async def lifespan(_app: FastAPI):
         if workspace_path.is_file():
             checkpoint_path = workspace_path
     configure_learned_fusion(str(checkpoint_path), settings.fusion_device)
+    segmentation_checkpoint_path = Path(settings.water_segmentation_checkpoint_path)
+    if not segmentation_checkpoint_path.is_absolute() and not segmentation_checkpoint_path.is_file():
+        workspace_path = Path(__file__).resolve().parents[2] / segmentation_checkpoint_path
+        if workspace_path.is_file():
+            segmentation_checkpoint_path = workspace_path
+    segmentation = configure_water_segmentation(
+        str(segmentation_checkpoint_path), settings.water_segmentation_device
+    )
+    if segmentation.available:
+        print(f"[water-segmentation] OpticalSarFusionSegmenter loaded from {segmentation_checkpoint_path}")
+    else:
+        print(f"[water-segmentation] WARNING — model not loaded. Reason: {segmentation.error}")
     change_checkpoint_path = Path(settings.change_checkpoint_path)
     if (
         not change_checkpoint_path.is_absolute()
@@ -98,21 +117,56 @@ def _gemini_fusion_wording(query: str | None, result: dict) -> str | None:
     if isinstance(llm, FakeLLM):
         return None
     evidence = result.get("evidence", {})
-    learned = evidence.get("learned_fusion", {})
+    segmentation_active = bool(evidence.get("water_segmentation", {}).get("available"))
+    learned = evidence.get("learned_fusion", {}) if not segmentation_active else {}
+    hierarchy = (
+        "The OpticalSarFusionSegmenter result is the primary pixel-level water evidence. "
+        "State that result first. This model has no built-up head, so do not describe "
+        "built-up coverage as a segmentation result. Do not call the model output heuristic "
+        "or deterministic."
+        if segmentation_active
+        else "The specialist result is heuristic optical/SAR evidence; say so clearly."
+    )
     prompt = (
         "Answer the user's remote-sensing question using only the supplied specialist "
         "evidence. Do not invent locations, objects, percentages, or certainty. "
-        "Mention when evidence is heuristic or insufficient. Keep the answer concise.\n\n"
+        "Keep the answer concise. " + hierarchy + "\n\n"
         f"User question: {query.strip()}\n"
-        f"Deterministic spatial evidence: {evidence}\n"
-        f"Learned scene evidence: {learned}\n"
-        f"Baseline result: {result.get('text', '')}"
+        f"Segmentation/specialist evidence: {evidence}\n"
+        f"Legacy classifier evidence (only if supplied): {learned}\n"
+        f"Specialist summary: {result.get('text', '')}"
     )
     try:
         answer = llm.answer([], prompt, None).strip()
     except Exception:
         return None
-    return answer or None
+    # Gemini sometimes escapes Markdown emphasis/list markers even though the
+    # frontend renders Markdown. Restore those markers for readable bullets.
+    return re.sub(r"\\([*_])", r"\1", answer) or None
+
+
+@app.post("/fusion/follow-up", response_model=FusionFollowUpResponse)
+async def fusion_follow_up(request: FusionFollowUpRequest) -> FusionFollowUpResponse:
+    """Answer a follow-up with Gemini, grounded in the prior model result."""
+    llm = get_llm(settings)
+    if isinstance(llm, FakeLLM):
+        raise HTTPException(status_code=503, detail="Gemini is not configured for follow-up questions.")
+    prompt = (
+        "Answer the follow-up remote-sensing question using only this prior OpticalSarFusionSegmenter "
+        "result and its evidence. The model is the primary water evidence. Do not invent new "
+        "measurements or claim that built-up cues came from the water model. Keep the answer concise.\n\n"
+        f"Prior specialist summary: {request.specialist_summary}\n"
+        f"Prior evidence: {request.evidence}\n\n"
+        f"Follow-up question: {request.query.strip()}"
+    )
+    try:
+        answer = llm.answer([], prompt, None).strip()
+    except Exception as exc:  # noqa: BLE001 - expose a useful API failure to the chat UI
+        raise HTTPException(status_code=503, detail=f"Gemini follow-up failed: {exc}") from exc
+    cleaned = re.sub(r"\\([*_])", r"\1", answer)
+    if not cleaned:
+        raise HTTPException(status_code=503, detail="Gemini returned an empty follow-up response.")
+    return FusionFollowUpResponse(text=cleaned, provider="gemini")
 
 
 @app.get("/health")
@@ -166,6 +220,7 @@ async def fusion(
         "optical_sar",
         input_files,
         ordered_modalities=True,
+        allow_geospatial_alignment=True,
     )
     if not compatibility_result.valid:
         raise HTTPException(status_code=400, detail=compatibility_result.error)

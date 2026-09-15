@@ -30,7 +30,7 @@ class ChangeDetectionDataset(Dataset[dict[str, Any]]):
     """PyTorch Dataset for LEVIR-CD (or any A / B / label layout).
 
     Args:
-        root:       Path to the split directory, e.g. ``/content/LEVIR-CD/train``.
+        root:       Path to the split directory, e.g. ``/content/LEVIR-CD-clean/train``.
         split:      One of ``"train"``, ``"val"``, ``"test"``.  Used only to
                     decide whether augmentation is applied.
         image_size: Spatial size ``(H, W)`` to resize every sample to.
