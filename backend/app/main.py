@@ -4,19 +4,49 @@ import base64
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.chat.router import router as chat_router
 from app.compatibility.checker import check_compatibility
 from app.config import get_settings
-from app.db import init_db
+from app.db import get_db, init_db
 from app.io.geotiff import preview_from_bytes
 from app.llm.gemini import FakeLLM, get_llm
-from app.schemas import ChangeResponse, CompatibilityResult, FusionResponse, JobType, PreviewResponse
+from app.schemas import (
+    ChangeResponse,
+    CompatibilityResult,
+    FusionResponse,
+    JobType,
+    PreviewResponse,
+)
 from app.specialists.change_detection.change import configure_learned_change, run_change
 from app.specialists.optical_sar.fusion import configure_learned_fusion, run_fusion
 from fastapi import File, Form, HTTPException, UploadFile
+from app.models import Asset
+
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.analysis.service import create_analysis
+from app.auth import AuthUser, get_current_user
+from app.chat.service import get_owned_session
+import uuid
+from uuid import UUID
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models import Asset
+
+from app.storage.gcs import (
+    ObjectStorage,
+    analysis_overlay_object_key,
+    get_storage,
+)
+
+
+from app.models import Analysis
+from app.reports.service import create_analysis_report, save_report
+from app.storage.gcs import analysis_overlay_object_key
 
 
 @asynccontextmanager
@@ -29,7 +59,10 @@ async def lifespan(_app: FastAPI):
             checkpoint_path = workspace_path
     configure_learned_fusion(str(checkpoint_path), settings.fusion_device)
     change_checkpoint_path = Path(settings.change_checkpoint_path)
-    if not change_checkpoint_path.is_absolute() and not change_checkpoint_path.is_file():
+    if (
+        not change_checkpoint_path.is_absolute()
+        and not change_checkpoint_path.is_file()
+    ):
         workspace_path = Path(__file__).resolve().parents[2] / change_checkpoint_path
         if workspace_path.is_file():
             change_checkpoint_path = workspace_path
@@ -37,7 +70,9 @@ async def lifespan(_app: FastAPI):
     if lc.available:
         print(f"[change] SiameseChangeDetector loaded from {change_checkpoint_path}")
     else:
-        print(f"[change] WARNING — model not loaded, using fallback. Reason: {lc.error}")
+        print(
+            f"[change] WARNING — model not loaded, using fallback. Reason: {lc.error}"
+        )
     yield
 
 
@@ -94,7 +129,9 @@ async def preview(file: UploadFile = File(...)) -> PreviewResponse:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail=f"Could not read image: {exc}") from exc
+        raise HTTPException(
+            status_code=400, detail=f"Could not read image: {exc}"
+        ) from exc
     return PreviewResponse(preview_png_base64=b64, metadata=meta)
 
 
@@ -153,7 +190,9 @@ async def fusion(
     overlay = result.get("overlay")
     return FusionResponse(
         text=result["text"],
-        overlay_png_base64=(base64.b64encode(overlay).decode("ascii") if overlay else None),
+        overlay_png_base64=(
+            base64.b64encode(overlay).decode("ascii") if overlay else None
+        ),
         cloud_pct=result.get("cloud_pct"),
         score=result.get("score"),
         evidence=result.get("evidence", {}),
@@ -162,30 +201,222 @@ async def fusion(
 
 @app.post("/change", response_model=ChangeResponse)
 async def change(
+    session_id: str = Form(...),
     query: str | None = Form(None),
+    before_asset_id: str | None = Form(None),
+    after_asset_id: str | None = Form(None),
     upload_files: list[UploadFile] | None = File(None, alias="files"),
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+    storage: ObjectStorage = Depends(get_storage),
 ) -> ChangeResponse:
+    # Make sure this session belongs to the signed-in user.
+    try:
+        session_uuid = uuid.UUID(session_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid session ID",
+        ) from exc
+
+    await get_owned_session(
+        db,
+        session_uuid,
+        user.clerk_user_id,
+    )
+
     input_files = [
-        (upload.filename or "upload.bin", await upload.read())
+        (
+            upload.filename or "upload.bin",
+            await upload.read(),
+        )
         for upload in upload_files or []
     ]
-    compatibility_result = check_compatibility("before_after", input_files)
+
+    compatibility_result = check_compatibility(
+        "before_after",
+        input_files,
+    )
+
     if not compatibility_result.valid:
-        raise HTTPException(status_code=400, detail=compatibility_result.error)
+        raise HTTPException(
+            status_code=400,
+            detail=compatibility_result.error,
+        )
+
     try:
         result = run_change(
             input_files[0][1],
             input_files[1][1],
             query=query,
-            metadata={"files": compatibility_result.extras.get("files", [])},
+            metadata={
+                "files": compatibility_result.extras.get("files", []),
+            },
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        ) from exc
+
     overlay = result.get("overlay")
-    return ChangeResponse(
-        text=result["text"],
-        overlay_png_base64=(base64.b64encode(overlay).decode("ascii") if overlay else None),
-        score=result.get("score"),
+
+    # Create the database record first so we have an analysis ID.
+    analysis = await create_analysis(
+        db,
+        session_id=session_uuid,
+        before_asset_id=uuid.UUID(before_asset_id) if before_asset_id else None,
+        after_asset_id=uuid.UUID(after_asset_id) if after_asset_id else None,
+        analysis_text=result["text"],
         change_pct=result.get("change_pct"),
+        score=result.get("score"),
+        method=result.get("evidence", {}).get("method"),
         evidence=result.get("evidence", {}),
     )
+
+    # Save the generated overlay to object storage.
+    overlay_gcs_uri = None
+
+    if overlay:
+        overlay_key = analysis_overlay_object_key(
+            user.clerk_user_id,
+            session_id,
+            str(analysis.id),
+        )
+
+        overlay_gcs_uri = storage.upload_bytes(
+            overlay_key,
+            overlay,
+            content_type="image/png",
+        )
+
+        analysis.overlay_gcs_uri = overlay_gcs_uri
+        await db.commit()
+        await db.refresh(analysis)
+
+    return ChangeResponse(
+        text=result["text"],
+        overlay_png_base64=(
+            base64.b64encode(overlay).decode("ascii") if overlay else None
+        ),
+        score=result.get("score"),
+        change_pct=result.get("change_pct"),
+        analysis_id=str(analysis.id),
+        evidence={
+            **result.get("evidence", {}),
+            "analysis_id": str(analysis.id),
+        },
+    )
+
+
+@app.post("/sessions/{session_id}/analyses/{analysis_id}/report")
+async def generate_report(
+    session_id: UUID,
+    analysis_id: UUID,
+    user: AuthUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    storage: ObjectStorage = Depends(get_storage),
+) -> dict:
+    # Make sure the session belongs to the signed-in user.
+    session = await get_owned_session(
+        db,
+        session_id,
+        user.clerk_user_id,
+    )
+
+    # Find the requested analysis inside this session.
+    result = await db.execute(
+        select(Analysis).where(
+            Analysis.id == analysis_id,
+            Analysis.session_id == session_id,
+        )
+    )
+
+    analysis = result.scalar_one_or_none()
+
+    if analysis is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Analysis not found",
+        )
+
+    # Load the generated overlay if one exists.
+
+    before_png = None
+    after_png = None
+    overlay_png = None
+
+    if analysis.before_asset_id:
+        result = await db.execute(
+            select(Asset).where(Asset.id == analysis.before_asset_id)
+        )
+
+        before_asset = result.scalar_one_or_none()
+
+        if before_asset and before_asset.preview_gcs_uri:
+            before_png = storage.download_bytes(before_asset.preview_gcs_uri)
+
+    if analysis.after_asset_id:
+        result = await db.execute(
+            select(Asset).where(Asset.id == analysis.after_asset_id)
+        )
+
+        after_asset = result.scalar_one_or_none()
+
+        if after_asset and after_asset.preview_gcs_uri:
+            after_png = storage.download_bytes(after_asset.preview_gcs_uri)
+
+    if analysis.overlay_gcs_uri:
+        try:
+            overlay_png = storage.download_bytes(analysis.overlay_gcs_uri)
+        except FileNotFoundError:
+            overlay_png = None
+
+        if analysis.overlay_gcs_uri:
+            try:
+                overlay_png = storage.download_bytes(analysis.overlay_gcs_uri)
+            except FileNotFoundError:
+                overlay_png = None
+
+    # Generate the PDF.
+    pdf_bytes = create_analysis_report(
+        title=f"{session.title} — Satellite Analysis",
+        analysis_text=analysis.analysis_text,
+        change_pct=analysis.change_pct,
+        score=analysis.score,
+        method=analysis.method,
+        before_png=before_png,
+        after_png=after_png,
+        overlay_png=overlay_png,
+    )
+
+    # Store the PDF.
+    report_id = uuid.uuid4()
+
+    report_key = (
+        f"users/{user.clerk_user_id}/sessions/" f"{session_id}/reports/{report_id}.pdf"
+    )
+
+    pdf_gcs_uri = storage.upload_bytes(
+        report_key,
+        pdf_bytes,
+        content_type="application/pdf",
+    )
+
+    # Save report metadata.
+    report = await save_report(
+        db,
+        session_id=session_id,
+        analysis_id=analysis.id,
+        title=f"{session.title} — Satellite Analysis",
+        pdf_gcs_uri=pdf_gcs_uri,
+    )
+
+    return {
+        "id": str(report.id),
+        "session_id": str(report.session_id),
+        "analysis_id": str(report.analysis_id),
+        "title": report.title,
+        "pdf_gcs_uri": report.pdf_gcs_uri,
+        "created_at": report.created_at,
+    }

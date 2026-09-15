@@ -87,6 +87,7 @@ function AskSceneWorkspace() {
   const [messages, setMessages] = useState<ChatMessageData[]>([WELCOME])
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
+  const [analysisLoading, setAnalysisLoading] = useState(false)
   const [previews, setPreviews] = useState<Record<string, StoredPreview>>({})
   const [activeId, setActiveId] = useState<string | null>(null)
   const [zoom, setZoom] = useState(1)

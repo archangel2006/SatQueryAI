@@ -39,6 +39,16 @@ def preview_object_key(
     return f"users/{clerk_user_id}/sessions/{session_id}/{asset_id}/preview.png"
 
 
+def analysis_overlay_object_key(
+    clerk_user_id: str,
+    session_id: str,
+    analysis_id: str,
+) -> str:
+    return (
+        f"users/{clerk_user_id}/sessions/{session_id}/"
+        f"analysis/{analysis_id}/overlay.png"
+    )
+
 def guess_content_type(filename: str) -> str:
     ctype, _ = mimetypes.guess_type(filename)
     return ctype or "application/octet-stream"

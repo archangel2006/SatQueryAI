@@ -45,4 +45,5 @@ class ChangeResponse(BaseModel):
     overlay_png_base64: str | None = None
     score: float | None = None
     change_pct: float | None = None
-    evidence: dict[str, Any] = Field(default_factory=dict)
+    analysis_id: str
+    evidence: dict

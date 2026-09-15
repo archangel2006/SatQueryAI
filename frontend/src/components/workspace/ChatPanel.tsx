@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import { ChatComposer } from './ChatComposer'
 import { ChatMessage, type ChatMessageData } from './ChatMessage'
 import { AnalysisLoading } from './AnalysisLoading'
@@ -16,6 +16,7 @@ type ChatPanelProps = {
   onSelectAttachment?: (id: string) => void
   busy?: boolean
   analysisLoading?: boolean
+  analysisAction?: ReactNode
   title?: string
   subtitle?: string
 }
@@ -33,6 +34,7 @@ export function ChatPanel({
   onSelectAttachment,
   busy,
   analysisLoading = false,
+  analysisAction,
   title = 'Ask this scene',
   subtitle = 'Attach a scene, ask a question, then Send',
 }: ChatPanelProps) {
@@ -72,6 +74,13 @@ export function ChatPanel({
 
         <div ref={endRef} />
       </div>
+
+      {/* Analyze action */}
+      {analysisAction ? (
+        <div className="shrink-0 border-t border-border bg-bg px-3 pt-2">
+          {analysisAction}
+        </div>
+      ) : null}
 
       {/* Composer */}
       <ChatComposer

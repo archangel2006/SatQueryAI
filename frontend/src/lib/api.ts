@@ -27,7 +27,23 @@ export type ChangeResponse = {
   overlay_png_base64: string | null
   score: number | null
   change_pct: number | null
+  analysis_id: string
   evidence: Record<string, unknown>
+}
+
+
+export type Analysis = {
+  id: string
+  session_id: string
+  before_asset_id: string | null
+  after_asset_id: string | null
+  analysis_text: string
+  change_pct: number | null
+  score: number | null
+  method: string | null
+  evidence: Record<string, unknown>
+  overlay_gcs_uri: string | null
+  created_at: string
 }
 
 export type SessionListItem = {
@@ -78,6 +94,40 @@ export type UploadAssetResponse = {
   user_message: MessageOut
   assistant_message: MessageOut
 }
+
+export async function getSessionAnalyses(
+  getToken: TokenFn,
+  sessionId: string,
+): Promise<Analysis[]> {
+  const headers = await authHeaders(getToken)
+
+  const res = await fetch(
+    `${API_URL}/sessions/${sessionId}/analyses`,
+    {
+      method: 'GET',
+      headers,
+    },
+  )
+
+  if (!res.ok) {
+    throw new Error(
+      await readError(res, 'Could not load analyses'),
+    )
+  }
+
+  return (await res.json()) as Analysis[]
+}
+
+
+export type Report = {
+  id: string
+  session_id: string
+  analysis_id: string
+  title: string
+  pdf_gcs_uri: string
+  created_at: string
+}
+
 
 const API_URL =
   (import.meta.env.VITE_API_URL as string | undefined) ??
@@ -130,21 +180,47 @@ export async function postFusion(
 }
 
 export async function postChange(
+  getToken: TokenFn,
   before: File | Blob,
   after: File | Blob,
+  sessionId: string,
   query?: string,
+  beforeAssetId?: string,
+  afterAssetId?: string,
 ): Promise<ChangeResponse> {
   const body = new FormData()
+
   body.append('files', before)
   body.append('files', after)
-  if (query?.trim()) body.append('query', query.trim())
+  body.append('session_id', sessionId)
+
+  if (query?.trim()) {
+    body.append('query', query.trim())
+  }
+
+  if (beforeAssetId) {
+    body.append('before_asset_id', beforeAssetId)
+  }
+
+  if (afterAssetId) {
+    body.append('after_asset_id', afterAssetId)
+  }
+
+  const headers = await authHeaders(getToken)
+
   const res = await fetch(`${API_URL}/change`, {
     method: 'POST',
+    headers,
     body,
   })
-  if (!res.ok) throw new Error(await readError(res, 'Change detection failed'))
+
+  if (!res.ok) {
+    throw new Error(await readError(res, 'Change detection failed'))
+  }
+
   return (await res.json()) as ChangeResponse
 }
+
 
 export function previewToObjectUrl(base64: string): string {
   const binary = atob(base64)
@@ -262,4 +338,76 @@ export async function sendSessionMessage(
   })
   if (!res.ok) throw new Error(await readError(res, 'Send failed'))
   return (await res.json()) as SendMessageResponse
+}
+
+
+export async function generateAnalysisReport(
+  getToken: TokenFn,
+  sessionId: string,
+  analysisId: string,
+): Promise<Report> {
+  const headers = await authHeaders(getToken)
+
+  const res = await fetch(
+    `${API_URL}/sessions/${sessionId}/analyses/${analysisId}/report`,
+    {
+      method: 'POST',
+      headers,
+    },
+  )
+
+  if (!res.ok) {
+    throw new Error(
+      await readError(res, 'Could not generate report'),
+    )
+  }
+
+  return (await res.json()) as Report
+}
+
+
+export async function getSessionReports(
+  getToken: TokenFn,
+  sessionId: string,
+): Promise<Report[]> {
+  const headers = await authHeaders(getToken)
+
+  const res = await fetch(
+    `${API_URL}/sessions/${sessionId}/reports`,
+    {
+      method: 'GET',
+      headers,
+    },
+  )
+
+  if (!res.ok) {
+    throw new Error(
+      await readError(res, 'Could not load reports'),
+    )
+  }
+
+  return (await res.json()) as Report[]
+}
+
+
+export async function downloadReport(
+  getToken: TokenFn,
+  sessionId: string,
+  reportId: string,
+): Promise<Blob> {
+  const headers = await authHeaders(getToken)
+
+  const res = await fetch(
+    `${API_URL}/sessions/${sessionId}/reports/${reportId}/download`,
+    {
+      method: 'GET',
+      headers,
+    },
+  )
+
+  if (!res.ok) {
+    throw new Error(await readError(res, 'Could not download report'))
+  }
+
+  return await res.blob()
 }
