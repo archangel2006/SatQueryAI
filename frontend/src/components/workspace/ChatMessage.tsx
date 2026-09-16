@@ -18,6 +18,8 @@ export type ChatMessageData = {
   /** Extra thumbs (e.g. before + after on one user turn). */
   attachments?: ChatAttachment[]
   confidence?: number
+  /** Small source caption under the bubble (Ask-scene model badge). */
+  badge?: string
 }
 
 type ChatMessageProps = {
@@ -85,6 +87,9 @@ export function ChatMessage({
           <p className="mt-2 text-[11px] text-muted">
             Confidence {message.confidence.toFixed(2)}
           </p>
+        ) : null}
+        {message.badge ? (
+          <p className="mt-1.5 text-[10px] leading-4 text-muted">{message.badge}</p>
         ) : null}
       </div>
     </div>

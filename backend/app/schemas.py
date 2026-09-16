@@ -58,3 +58,17 @@ class ChangeResponse(BaseModel):
     change_pct: float | None = None
     analysis_id: str
     evidence: dict
+
+
+class AskSatqueryResponse(BaseModel):
+    answer: str
+    model: str
+    latency_sec: float
+
+
+class AskGroundedResponse(BaseModel):
+    vlm_fact: str
+    narrated_answer: str
+    model_chain: list[str]
+    latency_sec: float
+    path_used: str

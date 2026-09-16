@@ -17,6 +17,7 @@ type ChatPanelProps = {
   busy?: boolean
   analysisLoading?: boolean
   analysisAction?: ReactNode
+  headerExtra?: ReactNode
   title?: string
   subtitle?: string
   allowAttachments?: boolean
@@ -36,6 +37,7 @@ export function ChatPanel({
   busy,
   analysisLoading = false,
   analysisAction,
+  headerExtra,
   title = 'Ask this scene',
   subtitle = 'Attach a scene, ask a question, then Send',
   allowAttachments = true,
@@ -58,6 +60,7 @@ export function ChatPanel({
         <p className="mt-0.5 text-[11px] leading-4 text-muted">
           {subtitle}
         </p>
+        {headerExtra ? <div className="mt-2">{headerExtra}</div> : null}
       </div>
 
       {/* Messages */}

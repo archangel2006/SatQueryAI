@@ -19,7 +19,11 @@ import {
   type ImageMetadata,
   type MessageOut,
   type SessionListItem,
+  askAnswerBadge,
+  postAskAuto,
+  postAskGrounded,
   uploadSessionAsset,
+  type AskModelMode,
 } from '../lib/api'
 import { ASK_JOB, filterAskSessions } from '../lib/sessionJob'
 import { ROUTES } from '../routes'
@@ -37,6 +41,17 @@ const WELCOME: ChatMessageData = {
 
 const ACTIVE_SESSION_KEY = 'satquery.activeSessionId'
 const SIDEBAR_KEY = 'satquery.sidebarCollapsed'
+
+const ASK_MODES: { id: AskModelMode; label: string }[] = [
+  { id: 'satquery', label: 'SatQuery' },
+  { id: 'gemini', label: 'Gemini' },
+  { id: 'auto', label: 'Auto' },
+]
+
+async function fileFromPreviewUrl(url: string, filename = 'scene.png'): Promise<File> {
+  const blob = await fetch(url).then((res) => res.blob())
+  return new File([blob], filename, { type: blob.type || 'image/png' })
+}
 
 function messageToUi(msg: MessageOut, previews: Record<string, StoredPreview>): ChatMessageData {
   const data: ChatMessageData = {
@@ -96,6 +111,7 @@ function AskSceneWorkspace() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed)
   const [stagedFile, setStagedFile] = useState<File | null>(null)
   const [stagedPreviewUrl, setStagedPreviewUrl] = useState<string | null>(null)
+  const [askMode, setAskMode] = useState<AskModelMode>('satquery')
 
   const active = activeId ? previews[activeId] ?? null : null
 
@@ -352,6 +368,80 @@ function AskSceneWorkspace() {
     ])
 
     try {
+      if (askMode !== 'gemini') {
+        const image =
+          file ??
+          (active?.url ? await fileFromPreviewUrl(active.url) : null)
+        if (!image) {
+          const missing = 'Attach a scene before using SatQuery VLM.'
+          setError(missing)
+          setMessages((prev) =>
+            prev.map((item) =>
+              item.id === pendingAssistantId
+                ? { id: `err-${Date.now()}`, role: 'assistant', text: missing }
+                : item,
+            ),
+          )
+          return
+        }
+
+        let userAttachment: ChatMessageData['attachment']
+        if (file) {
+          try {
+            const uploaded = await uploadSessionAsset(tokenFn, sessionId, file)
+            const url = previewToObjectUrl(uploaded.asset.preview_png_base64 ?? '')
+            const id = uploaded.asset.id
+            setPreviews((prev) => ({
+              ...prev,
+              [id]: { url, metadata: uploaded.asset.metadata },
+            }))
+            setActiveId(id)
+            setZoom(1)
+            setMode('split')
+            userAttachment = { id, url, filename: file.name }
+            clearStaged()
+          } catch {
+            if (stagedPreviewUrl) {
+              userAttachment = {
+                id: 'staged',
+                url: stagedPreviewUrl,
+                filename: file.name,
+              }
+            }
+          }
+        } else if (activeId && active) {
+          userAttachment = {
+            id: activeId,
+            url: active.url,
+            filename: 'scene.png',
+          }
+        }
+
+        const grounded =
+          askMode === 'auto'
+            ? await postAskAuto(image, text)
+            : await postAskGrounded(image, text)
+
+        setMessages((prev) =>
+          prev.map((message) => {
+            if (message.id === pendingUserId) {
+              return { ...message, attachment: userAttachment }
+            }
+            if (message.id === pendingAssistantId) {
+              return {
+                id: `vlm-${Date.now()}`,
+                role: 'assistant',
+                text: grounded.narrated_answer,
+                badge: askAnswerBadge(grounded),
+              }
+            }
+            return message
+          }),
+        )
+        await refreshSessions()
+        return
+      }
+
       if (file) {
         const res = await uploadSessionAsset(
           tokenFn,
@@ -389,6 +479,7 @@ function AskSceneWorkspace() {
           res.assistant_message,
           {},
         )
+        assistantMessage.badge = 'Answered by Gemini'
 
         // Replace the temporary messages with the real response. 
         setMessages((prev) =>
@@ -422,6 +513,7 @@ function AskSceneWorkspace() {
           res.assistant_message,
           previews,
         )
+        assistantMessage.badge = 'Answered by Gemini'
 
         // Replace the temporary messages with the real response. 
         setMessages((prev) =>
@@ -539,6 +631,31 @@ function AskSceneWorkspace() {
                 onSelectAttachment={selectAttachment}
                 busy={busy || booting}
                 analysisLoading={busy && !booting}
+                headerExtra={
+                  <div
+                    className="flex rounded-lg border border-border bg-surface p-0.5"
+                    role="radiogroup"
+                    aria-label="Answer model"
+                  >
+                    {ASK_MODES.map((opt) => (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        role="radio"
+                        aria-checked={askMode === opt.id}
+                        disabled={busy || booting}
+                        onClick={() => setAskMode(opt.id)}
+                        className={`rounded-md px-2.5 py-1 text-[11px] font-medium ${
+                          askMode === opt.id
+                            ? 'bg-navy text-white dark:bg-accent dark:text-navy'
+                            : 'text-muted hover:text-ink'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                }
               />
             }
             renderer={

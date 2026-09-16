@@ -17,4 +17,20 @@ describe('ChatMessage markdown', () => {
     expect(strong.tagName).toBe('STRONG')
     expect(screen.queryByText('**water**')).toBeNull()
   })
+
+  it('renders a source badge under the bubble', () => {
+    render(
+      <ChatMessage
+        message={{
+          id: '2',
+          role: 'assistant',
+          text: 'There is water in this scene.',
+          badge: 'SatQuery VLM: Yes. · 0.4s · via satquery-grounded',
+        }}
+      />,
+    )
+    expect(
+      screen.getByText('SatQuery VLM: Yes. · 0.4s · via satquery-grounded'),
+    ).toBeTruthy()
+  })
 })

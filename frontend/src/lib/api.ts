@@ -94,6 +94,28 @@ export type SendMessageResponse = {
   assistant_message: MessageOut
 }
 
+export type AskGroundedResponse = {
+  vlm_fact: string
+  narrated_answer: string
+  model_chain: string[]
+  latency_sec: number
+  path_used: string
+}
+
+export type AskSatqueryResponse = {
+  answer: string
+  model: string
+  latency_sec: number
+}
+
+export type AskModelMode = 'satquery' | 'gemini' | 'auto'
+
+export function askAnswerBadge(res: AskGroundedResponse): string {
+  if (res.path_used === 'gemini') return 'Answered by Gemini'
+  const sec = Number.isFinite(res.latency_sec) ? res.latency_sec.toFixed(1) : '?'
+  return `SatQuery VLM: ${res.vlm_fact} · ${sec}s · via ${res.path_used}`
+}
+
 export type UploadAssetResponse = {
   asset: AssetOut
   user_message: MessageOut
@@ -340,6 +362,36 @@ export async function uploadSessionAsset(
   })
   if (!res.ok) throw new Error(await readError(res, 'Upload failed'))
   return (await res.json()) as UploadAssetResponse
+}
+
+async function postAskForm(
+  path: '/ask_grounded' | '/ask_auto',
+  image: File,
+  question: string,
+): Promise<AskGroundedResponse> {
+  const body = new FormData()
+  body.append('image', image)
+  body.append('question', question)
+  const res = await fetch(`${API_URL}${path}`, {
+    method: 'POST',
+    body,
+  })
+  if (!res.ok) throw new Error(await readError(res, 'Ask failed'))
+  return (await res.json()) as AskGroundedResponse
+}
+
+export async function postAskGrounded(
+  image: File,
+  question: string,
+): Promise<AskGroundedResponse> {
+  return postAskForm('/ask_grounded', image, question)
+}
+
+export async function postAskAuto(
+  image: File,
+  question: string,
+): Promise<AskGroundedResponse> {
+  return postAskForm('/ask_auto', image, question)
 }
 
 export async function sendSessionMessage(

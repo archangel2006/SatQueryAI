@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     chat_context_message_limit: int = 20
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     local_classifier_path: str = ""
+    # Fine-tuned Qwen2-VL-2B served remotely (Colab + ngrok). Empty = disabled.
+    satquery_vlm_url: str = ""
 
     @property
     def cors_origin_list(self) -> list[str]:

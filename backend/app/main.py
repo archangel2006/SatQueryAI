@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.chat.router import router as chat_router
 from app.compatibility.checker import check_compatibility
 from app.config import get_settings
+from app.llm.satquery_vlm import router as satquery_vlm_router
 from app.db import get_db, init_db
 from app.io.geotiff import preview_from_bytes
 from app.llm.gemini import FakeLLM, get_llm
@@ -107,6 +108,7 @@ app.add_middleware(
 )
 
 app.include_router(chat_router)
+app.include_router(satquery_vlm_router)
 
 
 def _gemini_fusion_wording(query: str | None, result: dict) -> str | None:

@@ -9,6 +9,12 @@ os.environ["GCS_BUCKET"] = ""
 os.environ["GOOGLE_CLOUD_PROJECT"] = ""
 os.environ["CLERK_JWKS_URL"] = ""
 os.environ["CLERK_ISSUER"] = ""
+# Do not load 100MB+ checkpoints during pytest.
+os.environ["CHANGE_CHECKPOINT_PATH"] = ""
+os.environ["FUSION_CHECKPOINT_PATH"] = ""
+os.environ["LOCAL_CLASSIFIER_PATH"] = "__no_classifier__.pt"
+# Never hit the live Colab/ngrok VLM during pytest.
+os.environ["SATQUERY_VLM_URL"] = ""
 
 import numpy as np
 import pytest
