@@ -72,3 +72,20 @@ class AskGroundedResponse(BaseModel):
     model_chain: list[str]
     latency_sec: float
     path_used: str
+
+
+class SttResponse(BaseModel):
+    text: str
+
+
+class TranslateResponse(BaseModel):
+    text: str
+
+
+class AskLocaleResponse(BaseModel):
+    user_text: str
+    question_en: str
+    vlm_fact: str
+    reply_text: str
+    path_used: str
+    latency_sec: float

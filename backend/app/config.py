@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     local_classifier_path: str = ""
     # Fine-tuned Qwen2-VL-2B served remotely (Colab + ngrok). Empty = disabled.
     satquery_vlm_url: str = ""
+    elevenlabs_api_key: str = ""
+    elevenlabs_voice_id: str = ""
+    elevenlabs_tts_model: str = "eleven_v3"
 
     @property
     def cors_origin_list(self) -> list[str]:

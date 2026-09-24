@@ -14,6 +14,7 @@ import {
   previewToObjectUrl, sendSessionMessage, uploadSessionAsset,
   type MessageOut, type SessionListItem,
 } from '../lib/api'
+import { useSpokenLocale } from '../lib/useSpokenLocale'
 import { CHANGE_JOB, filterChangeSessions } from '../lib/sessionJob'
 import { ROUTES } from '../routes'
 
@@ -63,6 +64,7 @@ function ChangeSceneWorkspace() {
   const [analysisLoading, setAnalysisLoading] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const locale = useSpokenLocale(setError)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readCollapsed)
 
   const [beforeUrl, setBeforeUrl] = useState(DEMO_BEFORE)
@@ -211,21 +213,25 @@ function ChangeSceneWorkspace() {
   async function analyze(question: string) {
     if (!sessionId || !beforeFile || !afterFile || busy) return
     setBusy(true); setAnalysisLoading(true); setError(null); setDraft('')
+    locale.primeAudio()
     try {
       setMessages((current) => [...current.filter((message) => message.id !== 'welcome'), { id: `user-${Date.now()}`, role: 'user', text: question }])
-      const result = await postChange(tokenFn, beforeFile, afterFile, sessionId, question, beforeAssetId ?? undefined, afterAssetId ?? undefined)
+      const questionEn = await locale.toEnglish(question)
+      const result = await postChange(tokenFn, beforeFile, afterFile, sessionId, questionEn, beforeAssetId ?? undefined, afterAssetId ?? undefined)
       const evidence = result.evidence as Record<string, unknown>
       const method = typeof evidence.method === 'string' ? evidence.method : undefined
       const fallback = (evidence.metadata as Record<string, unknown> | undefined)?.fallback === true
       const tag = fallback ? '**Pixel-difference fallback**' : '**SiameseChangeDetector**'
       const changePct = result.change_pct == null ? 'unavailable' : `${result.change_pct.toFixed(1)}%`
       const score = result.score == null ? 'unavailable' : result.score.toFixed(3)
-      const text = `${tag}\n\n${result.text}\n\n**Changed area:** ${changePct}  |  **Score:** ${score}${method ? `  |  **Method:** ${method}` : ''}`
+      const body = await locale.fromEnglish(result.text)
+      const text = `${tag}\n\n${body}\n\n**Changed area:** ${changePct}  |  **Score:** ${score}${method ? `  |  **Method:** ${method}` : ''}`
       const url = result.overlay_png_base64 ? previewToObjectUrl(result.overlay_png_base64) : null
       const id = url ? `change-overlay-${Date.now()}` : undefined
       if (url && id) { clearOverlay(); setOverlay({ id, url }); setActiveAttachmentId(id) }
       setModelRan(true); setChangeContext(result.text); setAnalysisId(result.analysis_id)
-      setMessages((current) => [...current, { id: `assistant-${Date.now()}`, role: 'assistant', text, ...(url && id ? { attachment: { id, url, filename: 'change-overlay.png' } } : {}) }])
+      setMessages((current) => [...current, { id: `assistant-${Date.now()}`, role: 'assistant', text, speakLanguage: locale.language, ...(url && id ? { attachment: { id, url, filename: 'change-overlay.png' } } : {}) }])
+      locale.say(text, locale.language)
       await refreshSessions()
     } catch (err) { setDraft(question); setError(err instanceof Error ? err.message : 'Change detection failed') } finally { setAnalysisLoading(false); setBusy(false) }
   }
@@ -235,10 +241,14 @@ function ChangeSceneWorkspace() {
     if (!question || !sessionId || busy) return
     if (beforeFile && afterFile && !modelRan) { await analyze(question); return }
     setBusy(true); setError(null); setDraft('')
+    locale.primeAudio()
     try {
-      const contextualQuestion = changeContext ? `[Change detection result: ${changeContext}]\n\nUser question: ${question}` : question
+      const questionEn = await locale.toEnglish(question)
+      const contextualQuestion = changeContext ? `[Change detection result: ${changeContext}]\n\nUser question: ${questionEn}` : questionEn
       const response = await sendSessionMessage(tokenFn, sessionId, contextualQuestion)
-      setMessages((current) => [...current.filter((message) => message.id !== 'welcome'), { id: response.user_message.id, role: 'user', text: question }, { id: response.assistant_message.id, role: 'assistant', text: response.assistant_message.content }])
+      const reply = await locale.fromEnglish(response.assistant_message.content)
+      setMessages((current) => [...current.filter((message) => message.id !== 'welcome'), { id: response.user_message.id, role: 'user', text: question }, { id: response.assistant_message.id, role: 'assistant', text: reply, speakLanguage: locale.language }])
+      locale.say(reply, locale.language)
       await refreshSessions()
     } catch (err) { setDraft(question); setError(err instanceof Error ? err.message : 'Send failed') } finally { setBusy(false) }
   }
@@ -260,7 +270,7 @@ function ChangeSceneWorkspace() {
     {error ? <p className="mx-4 mt-3 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p> : null}
     <div className="flex min-h-0 flex-1"><SessionSidebar sessions={sessions} activeSessionId={sessionId} collapsed={sidebarCollapsed} onCollapsedChange={setCollapsed} onNewChat={() => void newChat()} onSelect={(id) => void loadSession(id)} onDelete={(id) => void removeChat(id)} busy={busy || uploadBusy || booting} />
       <div className="min-h-0 min-w-0 flex-1"><SplitWorkspace mode={mode} onModeChange={setMode} rightPanelOpen={rightPanelOpen} onRightPanelToggle={() => setRightPanelOpen((value) => !value)}
-        chat={<div className="flex h-full min-h-0 flex-col bg-[#060D1A]"><ChatPanel messages={messages} draft={draft} onDraftChange={setDraft} onSend={() => void send()} stagedFile={null} stagedPreviewUrl={null} onStageFile={() => undefined} onClearStaged={() => undefined} activeAttachmentId={activeAttachmentId} onSelectAttachment={(id) => { if (overlay?.id === id) setActiveAttachmentId((active) => active === id ? null : id) }} busy={busy || booting} analysisLoading={analysisLoading} analysisAction={scenesReady && !modelRan ? <div className="flex items-center justify-between gap-3 rounded-xl border border-accent/20 bg-accent/5 px-3 py-2"><div><p className="text-xs font-medium text-ink">Both scenes ready</p><p className="text-[10px] text-muted">{beforeFilename} → {afterFilename}</p></div><button type="button" disabled={busy} onClick={() => void analyze(DEFAULT_PROMPT)} className="rounded-lg bg-accent px-3 py-1.5 text-[11px] font-semibold text-navy disabled:opacity-50">Analyze changes</button></div> : null} title="Before vs after" subtitle={scenesReady ? (modelRan ? 'Ask Gemini about the detected changes' : 'Both images loaded — analyze the changes') : 'Upload both dates under the renderer, then ask'} allowAttachments={false} />
+        chat={<div className="flex h-full min-h-0 flex-col bg-[#060D1A]"><ChatPanel messages={messages} draft={draft} onDraftChange={setDraft} onSend={() => void send()} stagedFile={null} stagedPreviewUrl={null} onStageFile={() => undefined} onClearStaged={() => undefined} activeAttachmentId={activeAttachmentId} onSelectAttachment={(id) => { if (overlay?.id === id) setActiveAttachmentId((active) => active === id ? null : id) }} busy={busy || booting} analysisLoading={analysisLoading} analysisAction={scenesReady && !modelRan ? <div className="flex items-center justify-between gap-3 rounded-xl border border-accent/20 bg-accent/5 px-3 py-2"><div><p className="text-xs font-medium text-ink">Both scenes ready</p><p className="text-[10px] text-muted">{beforeFilename} → {afterFilename}</p></div><button type="button" disabled={busy} onClick={() => void analyze(DEFAULT_PROMPT)} className="rounded-lg bg-accent px-3 py-1.5 text-[11px] font-semibold text-navy disabled:opacity-50">Analyze changes</button></div> : null} title="Before vs after" subtitle={scenesReady ? (modelRan ? 'Ask Gemini about the detected changes' : 'Both images loaded — analyze the changes') : 'Upload both dates under the renderer, then ask'} allowAttachments={false} headerExtra={locale.languageButtons} enableVoice voiceLanguage={locale.voiceProps.voiceLanguage} onVoiceText={setDraft} onVoiceError={setError} transcribe={locale.voiceProps.transcribe} onPlay={locale.voiceProps.onPlay} />
           {analysisId ? <div className="border-t border-border bg-surface px-4 py-2 text-right"><button type="button" disabled={exporting} onClick={() => void exportReport()} className="rounded-lg border border-accent/30 bg-accent/10 px-3 py-1.5 text-[11px] font-semibold text-accent disabled:opacity-50">{exporting ? 'Exporting report…' : 'Export report'}</button></div> : null}
         </div>}
         renderer={<BeforeAfterRenderer beforeUrl={beforeUrl} afterUrl={afterUrl} changeOverlayUrl={overlay?.url ?? null} beforeFilename={beforeFilename} afterFilename={afterFilename} title="SCENE_DELTA // T1 vs T2" subtitle="Dual-slot co-registered frame analysis" legendLabel={overlay ? 'Detected changes' : null} zoom={zoom} onZoomChange={setZoom} onExpand={() => setMode('renderer')} onCloseToSplit={() => setMode('split')} expanded={mode === 'renderer'} onUploadBefore={(file) => void upload('before', file)} onUploadAfter={(file) => void upload('after', file)} uploadBusy={uploadBusy || booting} />}

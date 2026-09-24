@@ -22,7 +22,11 @@ import {
   askAnswerBadge,
   postAskAuto,
   postAskGrounded,
+  postAskLocale,
+  postStt,
   uploadSessionAsset,
+  ASK_LANGUAGES,
+  type AskLanguage,
   type AskModelMode,
 } from '../lib/api'
 import { ASK_JOB, filterAskSessions } from '../lib/sessionJob'
@@ -112,8 +116,15 @@ function AskSceneWorkspace() {
   const [stagedFile, setStagedFile] = useState<File | null>(null)
   const [stagedPreviewUrl, setStagedPreviewUrl] = useState<string | null>(null)
   const [askMode, setAskMode] = useState<AskModelMode>('satquery')
+  const [askLanguage, setAskLanguage] = useState<AskLanguage>('en')
 
   const active = activeId ? previews[activeId] ?? null : null
+
+  const speakerRef = useRef<HTMLAudioElement | null>(null)
+
+  const speakReply = useCallback(async (_text: string, _language: AskLanguage) => {
+    // Playback is optional. Do not fail the answer if ElevenLabs rejects the voice.
+  }, [])
 
   const tokenFn = useCallback(async () => getTokenRef.current(), [])
 
@@ -346,6 +357,11 @@ function AskSceneWorkspace() {
     setDraft('')
     setBusy(true)
     setError(null)
+    // Prime audio during the click so the browser allows speech after the API returns.
+    const primed = speakerRef.current ?? new Audio()
+    speakerRef.current = primed
+    void primed.play().catch(() => undefined)
+    primed.pause()
 
     const file = stagedFile
 
@@ -368,7 +384,7 @@ function AskSceneWorkspace() {
     ])
 
     try {
-      if (askMode !== 'gemini') {
+      if (askLanguage !== 'en' || askMode !== 'gemini') {
         const image =
           file ??
           (active?.url ? await fileFromPreviewUrl(active.url) : null)
@@ -418,9 +434,16 @@ function AskSceneWorkspace() {
         }
 
         const grounded =
-          askMode === 'auto'
-            ? await postAskAuto(image, text)
-            : await postAskGrounded(image, text)
+          askLanguage !== 'en'
+            ? null
+            : askMode === 'auto'
+              ? await postAskAuto(image, text)
+              : await postAskGrounded(image, text)
+
+        const locale =
+          askLanguage === 'en'
+            ? null
+            : await postAskLocale(image, text, askLanguage, askMode)
 
         setMessages((prev) =>
           prev.map((message) => {
@@ -428,16 +451,38 @@ function AskSceneWorkspace() {
               return { ...message, attachment: userAttachment }
             }
             if (message.id === pendingAssistantId) {
+              if (locale) {
+                return {
+                  id: `vlm-${Date.now()}`,
+                  role: 'assistant',
+                  text: locale.reply_text,
+                  speakLanguage: askLanguage,
+                  badge: askAnswerBadge({
+                    vlm_fact: locale.vlm_fact,
+                    narrated_answer: locale.reply_text,
+                    model_chain: [],
+                    latency_sec: locale.latency_sec,
+                    path_used: locale.path_used,
+                  }),
+                }
+              }
               return {
                 id: `vlm-${Date.now()}`,
                 role: 'assistant',
-                text: grounded.narrated_answer,
-                badge: askAnswerBadge(grounded),
+                text: grounded!.narrated_answer,
+                speakLanguage: askLanguage,
+                badge: askAnswerBadge(grounded!),
               }
             }
             return message
           }),
         )
+        const spoken = locale?.reply_text ?? grounded?.narrated_answer
+        if (spoken) {
+          void speakReply(spoken, askLanguage).catch((err: unknown) => {
+            setError(err instanceof Error ? err.message : 'Could not play audio')
+          })
+        }
         await refreshSessions()
         return
       }
@@ -480,6 +525,10 @@ function AskSceneWorkspace() {
           {},
         )
         assistantMessage.badge = 'Answered by Gemini'
+        assistantMessage.speakLanguage = askLanguage
+        void speakReply(assistantMessage.text, askLanguage).catch((err: unknown) => {
+          setError(err instanceof Error ? err.message : 'Could not play audio')
+        })
 
         // Replace the temporary messages with the real response. 
         setMessages((prev) =>
@@ -514,6 +563,10 @@ function AskSceneWorkspace() {
           previews,
         )
         assistantMessage.badge = 'Answered by Gemini'
+        assistantMessage.speakLanguage = askLanguage
+        void speakReply(assistantMessage.text, askLanguage).catch((err: unknown) => {
+          setError(err instanceof Error ? err.message : 'Could not play audio')
+        })
 
         // Replace the temporary messages with the real response. 
         setMessages((prev) =>
@@ -632,6 +685,7 @@ function AskSceneWorkspace() {
                 busy={busy || booting}
                 analysisLoading={busy && !booting}
                 headerExtra={
+                  <div className="flex flex-wrap items-center gap-2">
                   <div
                     className="flex rounded-lg border border-border bg-surface p-0.5"
                     role="radiogroup"
@@ -655,7 +709,41 @@ function AskSceneWorkspace() {
                       </button>
                     ))}
                   </div>
+                  <div
+                    className="flex flex-wrap rounded-lg border border-border bg-surface p-0.5"
+                    role="radiogroup"
+                    aria-label="Reply language"
+                  >
+                    {ASK_LANGUAGES.map((opt) => (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        role="radio"
+                        aria-checked={askLanguage === opt.id}
+                        disabled={busy || booting}
+                        onClick={() => setAskLanguage(opt.id)}
+                        className={`rounded-md px-2 py-1 text-[11px] font-medium ${
+                          askLanguage === opt.id
+                            ? 'bg-navy text-white dark:bg-accent dark:text-navy'
+                            : 'text-muted hover:text-ink'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                  </div>
                 }
+                enableVoice
+                voiceLanguage={askLanguage}
+                onVoiceText={setDraft}
+                onVoiceError={setError}
+                transcribe={(audio, language) => postStt(audio, language as AskLanguage)}
+                onPlay={(text, language) => {
+                  void speakReply(text, language).catch((err: unknown) => {
+                    setError(err instanceof Error ? err.message : 'Could not play audio')
+                  })
+                }}
               />
             }
             renderer={

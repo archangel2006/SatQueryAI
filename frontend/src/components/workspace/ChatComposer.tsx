@@ -1,4 +1,4 @@
-import { useRef, type FormEvent } from 'react'
+import { useRef, useState, type FormEvent } from 'react'
 import { Button } from '../Button'
 
 type ChatComposerProps = {
@@ -12,6 +12,11 @@ type ChatComposerProps = {
   disabled?: boolean
   busy?: boolean
   allowAttachments?: boolean
+  enableVoice?: boolean
+  voiceLanguage?: string
+  onVoiceText?: (text: string) => void
+  onVoiceError?: (message: string) => void
+  transcribe?: (audio: Blob, language: string) => Promise<string>
 }
 
 export function ChatComposer({
@@ -25,9 +30,47 @@ export function ChatComposer({
   disabled,
   busy,
   allowAttachments = true,
+  enableVoice = false,
+  voiceLanguage = 'en',
+  onVoiceText,
+  onVoiceError,
+  transcribe,
 }: ChatComposerProps) {
   const fileRef = useRef<HTMLInputElement>(null)
+  const recorderRef = useRef<MediaRecorder | null>(null)
+  const chunksRef = useRef<Blob[]>([])
+  const [recording, setRecording] = useState(false)
   const canSend = Boolean(value.trim()) && !disabled && !busy
+
+  async function toggleMic() {
+    if (!enableVoice || !transcribe || busy) return
+    if (recording && recorderRef.current) {
+      recorderRef.current.stop()
+      setRecording(false)
+      return
+    }
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    const recorder = new MediaRecorder(stream)
+    chunksRef.current = []
+    recorder.ondataavailable = (event) => {
+      if (event.data.size > 0) chunksRef.current.push(event.data)
+    }
+    recorder.onstop = () => {
+      stream.getTracks().forEach((track) => track.stop())
+      const blob = new Blob(chunksRef.current, { type: recorder.mimeType || 'audio/webm' })
+      void transcribe(blob, voiceLanguage)
+        .then((text) => {
+          if (text.trim()) onVoiceText?.(text.trim())
+        })
+        .catch((err: unknown) => {
+          const message = err instanceof Error ? err.message : 'Voice failed'
+          onVoiceError?.(message)
+        })
+    }
+    recorderRef.current = recorder
+    recorder.start()
+    setRecording(true)
+  }
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault()
@@ -94,11 +137,18 @@ export function ChatComposer({
         >
           <PaperclipIcon />
         </button> : null}
-        {allowAttachments ? <button
+        {allowAttachments || enableVoice ? <button
           type="button"
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-border bg-surface text-muted opacity-60"
-          title="Voice questions — coming soon"
-          disabled
+          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full border bg-surface ${
+            recording
+              ? 'border-red-500 text-red-500'
+              : enableVoice
+                ? 'border-border text-ink hover:bg-bg'
+                : 'border-border text-muted opacity-60'
+          }`}
+          title={enableVoice ? (recording ? 'Stop and transcribe' : 'Speak your question') : 'Voice questions — coming soon'}
+          disabled={!enableVoice || busy}
+          onClick={() => void toggleMic()}
         >
           <MicIcon />
         </button> : null}

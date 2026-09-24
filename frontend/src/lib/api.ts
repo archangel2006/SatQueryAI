@@ -110,6 +110,26 @@ export type AskSatqueryResponse = {
 
 export type AskModelMode = 'satquery' | 'gemini' | 'auto'
 
+export type AskLanguage = 'en' | 'hi' | 'hinglish' | 'ta' | 'te' | 'bn'
+
+export const ASK_LANGUAGES: { id: AskLanguage; label: string }[] = [
+  { id: 'en', label: 'English' },
+  { id: 'hi', label: 'Hindi' },
+  { id: 'hinglish', label: 'Hinglish' },
+  { id: 'ta', label: 'Tamil' },
+  { id: 'te', label: 'Telugu' },
+  { id: 'bn', label: 'Bengali' },
+]
+
+export type AskLocaleResponse = {
+  user_text: string
+  question_en: string
+  vlm_fact: string
+  reply_text: string
+  path_used: string
+  latency_sec: number
+}
+
 export function askAnswerBadge(res: AskGroundedResponse): string {
   if (res.path_used === 'gemini') return 'Answered by Gemini'
   const sec = Number.isFinite(res.latency_sec) ? res.latency_sec.toFixed(1) : '?'
@@ -392,6 +412,56 @@ export async function postAskAuto(
   question: string,
 ): Promise<AskGroundedResponse> {
   return postAskForm('/ask_auto', image, question)
+}
+
+export async function postStt(audio: Blob, language: AskLanguage): Promise<string> {
+  const body = new FormData()
+  body.append('audio', audio, 'speech.webm')
+  body.append('language', language)
+  const res = await fetch(`${API_URL}/stt`, { method: 'POST', body })
+  if (!res.ok) throw new Error(await readError(res, 'Could not hear that. Voice may not be configured.'))
+  const data = (await res.json()) as { text: string }
+  return data.text
+}
+
+export async function postAskLocale(
+  image: File,
+  question: string,
+  language: AskLanguage,
+  mode: AskModelMode,
+): Promise<AskLocaleResponse> {
+  const body = new FormData()
+  body.append('image', image)
+  body.append('question', question)
+  body.append('language', language)
+  body.append('mode', mode)
+  const res = await fetch(`${API_URL}/ask_locale`, { method: 'POST', body })
+  if (!res.ok) throw new Error(await readError(res, 'Ask failed'))
+  return (await res.json()) as AskLocaleResponse
+}
+
+export async function postTranslate(
+  text: string,
+  language: AskLanguage,
+  direction: 'to_en' | 'from_en',
+): Promise<string> {
+  const body = new FormData()
+  body.append('text', text)
+  body.append('language', language)
+  body.append('direction', direction)
+  const res = await fetch(`${API_URL}/translate`, { method: 'POST', body })
+  if (!res.ok) throw new Error(await readError(res, 'Translation failed'))
+  const data = (await res.json()) as { text: string }
+  return data.text
+}
+
+export async function postTts(text: string, language: AskLanguage): Promise<Blob> {
+  const body = new FormData()
+  body.append('text', text)
+  body.append('language', language)
+  const res = await fetch(`${API_URL}/tts`, { method: 'POST', body })
+  if (!res.ok) throw new Error(await readError(res, 'Could not play audio. Voice may not be configured.'))
+  return res.blob()
 }
 
 export async function sendSessionMessage(

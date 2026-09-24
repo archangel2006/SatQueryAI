@@ -9,6 +9,7 @@ import { SessionSidebar } from '../components/workspace/SessionSidebar'
 import { SplitWorkspace } from '../components/workspace/SplitWorkspace'
 import type { WorkspaceMode } from '../components/workspace/splitState'
 import { postFusion, postFusionFollowUp, postPreview, previewToObjectUrl, type ImageMetadata, type SessionListItem } from '../lib/api'
+import { useSpokenLocale } from '../lib/useSpokenLocale'
 import { ROUTES } from '../routes'
 
 type SlotKey = 'optical' | 'sar'
@@ -82,6 +83,7 @@ function CloudSceneWorkspace() {
   const [busySlot, setBusySlot] = useState<SlotKey | null>(null)
   const [analyzing, setAnalyzing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const locale = useSpokenLocale(setError)
   const [showSarPreview, setShowSarPreview] = useState(false)
   const [fusionContext, setFusionContext] = useState<FusionContext | null>(null)
   const [history, setHistory] = useState<FusionHistory[]>(readHistory)
@@ -154,13 +156,18 @@ function CloudSceneWorkspace() {
     ensureHistory()
     setMessages((previous) => [...previous.filter((message) => message.id !== 'welcome'), { id: `user-${Date.now()}`, role: 'user', text: question }])
     setDraft(''); setAnalyzing(true); setError(null)
+    locale.primeAudio()
     try {
+      const questionEn = await locale.toEnglish(question)
       if (fusionContext) {
-        const followUp = await postFusionFollowUp(question, fusionContext.summary, fusionContext.evidence)
-        setMessages((previous) => [...previous, { id: `assistant-${Date.now()}`, role: 'assistant', text: `**Gemini follow-up**\n\n${followUp.text}` }])
+        const followUp = await postFusionFollowUp(questionEn, fusionContext.summary, fusionContext.evidence)
+        const body = await locale.fromEnglish(followUp.text)
+        const reply = `**Gemini follow-up**\n\n${body}`
+        setMessages((previous) => [...previous, { id: `assistant-${Date.now()}`, role: 'assistant', text: reply, speakLanguage: locale.language }])
+        locale.say(reply, locale.language)
         return
       }
-      const result = await postFusion(opticalFile!, sarFile!, question)
+      const result = await postFusion(opticalFile!, sarFile!, questionEn)
       if (overlayUrl) URL.revokeObjectURL(overlayUrl)
       const nextOverlayUrl = result.overlay_png_base64 ? previewToObjectUrl(result.overlay_png_base64) : null
       setOverlayUrl(nextOverlayUrl); setView(nextOverlayUrl ? 'overlay' : 'optical')
@@ -168,11 +175,13 @@ function CloudSceneWorkspace() {
       const modelUsed = segmentation?.available === true
       const waterPct = typeof result.evidence.water_pct === 'number' ? result.evidence.water_pct.toFixed(1) : 'unavailable'
       const confidence = typeof segmentation?.confidence === 'number' ? segmentation.confidence.toFixed(2) : result.score?.toFixed(2) ?? 'unavailable'
-      const reply = modelUsed ? `**OpticalSarFusionSegmenter** (primary water model)\n\n${result.text}\n\n**Water coverage:** ${waterPct}%  |  **Confidence:** ${confidence}` : `**Optical/SAR heuristic fallback**\n\n${result.text}\n\n**Water-like coverage:** ${waterPct}%  |  **Confidence:** ${confidence}`
+      const body = await locale.fromEnglish(result.text)
+      const reply = modelUsed ? `**OpticalSarFusionSegmenter** (primary water model)\n\n${body}\n\n**Water coverage:** ${waterPct}%  |  **Confidence:** ${confidence}` : `**Optical/SAR heuristic fallback**\n\n${body}\n\n**Water-like coverage:** ${waterPct}%  |  **Confidence:** ${confidence}`
       setFusionContext({ summary: result.text, evidence: result.evidence })
       const attachmentId = nextOverlayUrl ? `water-mask-${Date.now()}` : undefined
       if (attachmentId) setActiveAttachmentId(attachmentId)
-      setMessages((previous) => [...previous, { id: `assistant-${Date.now()}`, role: 'assistant', text: reply, confidence: result.score ?? undefined, ...(nextOverlayUrl && attachmentId ? { attachment: { id: attachmentId, url: nextOverlayUrl, filename: 'water-segmentation-mask.png' } } : {}) }])
+      setMessages((previous) => [...previous, { id: `assistant-${Date.now()}`, role: 'assistant', text: reply, speakLanguage: locale.language, confidence: result.score ?? undefined, ...(nextOverlayUrl && attachmentId ? { attachment: { id: attachmentId, url: nextOverlayUrl, filename: 'water-segmentation-mask.png' } } : {}) }])
+      locale.say(reply, locale.language)
     } catch (err) { setDraft(question); setError(err instanceof Error ? err.message : 'Fusion failed') } finally { setAnalyzing(false) }
   }
 
@@ -185,7 +194,7 @@ function CloudSceneWorkspace() {
     {error ? <p className="mx-4 mt-3 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p> : null}
     <div className="flex min-h-0 flex-1"><SessionSidebar sessions={historySessions} activeSessionId={activeHistoryId} collapsed={sidebarCollapsed} onCollapsedChange={setSidebarCollapsed} onNewChat={newChat} onSelect={selectHistory} onDelete={deleteHistory} busy={analyzing || busySlot !== null} />
       <div className="min-h-0 min-w-0 flex-1"><SplitWorkspace mode={mode} onModeChange={setMode} rightPanelOpen={rightPanelOpen} onRightPanelToggle={() => setRightPanelOpen((open) => !open)}
-      chat={<ChatPanel messages={messages} draft={draft} onDraftChange={setDraft} onSend={() => void send()} stagedFile={null} stagedPreviewUrl={null} onStageFile={() => undefined} onClearStaged={() => undefined} activeAttachmentId={activeAttachmentId} onSelectAttachment={(id) => { setActiveAttachmentId((active) => active === id ? null : id); setView('overlay') }} busy={analyzing || busySlot !== null} analysisLoading={analyzing} title="Ask optical + SAR" subtitle={optical.file && sar.file ? 'Both inputs loaded — every message runs the water model' : 'Upload the two GeoTIFFs in the renderer first'} allowAttachments={false} />}
+      chat={<ChatPanel messages={messages} draft={draft} onDraftChange={setDraft} onSend={() => void send()} stagedFile={null} stagedPreviewUrl={null} onStageFile={() => undefined} onClearStaged={() => undefined} activeAttachmentId={activeAttachmentId} onSelectAttachment={(id) => { setActiveAttachmentId((active) => active === id ? null : id); setView('overlay') }} busy={analyzing || busySlot !== null} analysisLoading={analyzing} title="Ask optical + SAR" subtitle={optical.file && sar.file ? 'Both inputs loaded — every message runs the water model' : 'Upload the two GeoTIFFs in the renderer first'} allowAttachments={false} headerExtra={locale.languageButtons} enableVoice voiceLanguage={locale.voiceProps.voiceLanguage} onVoiceText={setDraft} onVoiceError={setError} transcribe={locale.voiceProps.transcribe} onPlay={locale.voiceProps.onPlay} />}
       renderer={<FusionRenderer optical={optical} sar={sar} overlayUrl={overlayUrl} busySlot={busySlot} busy={analyzing} showSarPreview={showSarPreview} view={view} onViewChange={setView} onOpticalFile={(file) => void chooseFile('optical', file)} onSarFile={(file) => void chooseFile('sar', file)} onToggleSarPreview={() => setShowSarPreview((visible) => !visible)} />}
       /></div>
     </div>

@@ -13,8 +13,10 @@ os.environ["CLERK_ISSUER"] = ""
 os.environ["CHANGE_CHECKPOINT_PATH"] = ""
 os.environ["FUSION_CHECKPOINT_PATH"] = ""
 os.environ["LOCAL_CLASSIFIER_PATH"] = "__no_classifier__.pt"
-# Never hit the live Colab/ngrok VLM during pytest.
+# Never hit the live Colab/ngrok VLM or ElevenLabs during pytest.
 os.environ["SATQUERY_VLM_URL"] = ""
+os.environ["ELEVENLABS_API_KEY"] = ""
+os.environ["ELEVENLABS_VOICE_ID"] = ""
 
 import numpy as np
 import pytest

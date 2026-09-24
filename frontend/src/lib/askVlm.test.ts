@@ -26,3 +26,17 @@ describe('askAnswerBadge', () => {
     ).toBe('Answered by Gemini')
   })
 })
+
+describe('ASK_LANGUAGES', () => {
+  it('offers the demo set including Hinglish', async () => {
+    const { ASK_LANGUAGES } = await import('./api')
+    expect(ASK_LANGUAGES.map((row) => row.id)).toEqual([
+      'en',
+      'hi',
+      'hinglish',
+      'ta',
+      'te',
+      'bn',
+    ])
+  })
+})

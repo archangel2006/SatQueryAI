@@ -1,5 +1,6 @@
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import type { AskLanguage } from '../../lib/api'
 import { ImageThumb } from './ImageThumb'
 
 export type ChatRole = 'user' | 'assistant'
@@ -20,18 +21,22 @@ export type ChatMessageData = {
   confidence?: number
   /** Small source caption under the bubble (Ask-scene model badge). */
   badge?: string
+  /** When set, show a Play button that speaks this bubble in that language. */
+  speakLanguage?: AskLanguage
 }
 
 type ChatMessageProps = {
   message: ChatMessageData
   activeAttachmentId?: string | null
   onSelectAttachment?: (id: string) => void
+  onPlay?: (text: string, language: AskLanguage) => void
 }
 
 export function ChatMessage({
   message,
   activeAttachmentId,
   onSelectAttachment,
+  onPlay,
 }: ChatMessageProps) {
   const isUser = message.role === 'user'
 
@@ -90,6 +95,15 @@ export function ChatMessage({
         ) : null}
         {message.badge ? (
           <p className="mt-1.5 text-[10px] leading-4 text-muted">{message.badge}</p>
+        ) : null}
+        {message.speakLanguage && onPlay && message.role === 'assistant' ? (
+          <button
+            type="button"
+            className="mt-1.5 text-[10px] font-medium text-muted underline-offset-2 hover:underline"
+            onClick={() => onPlay(message.text, message.speakLanguage!)}
+          >
+            Play
+          </button>
         ) : null}
       </div>
     </div>

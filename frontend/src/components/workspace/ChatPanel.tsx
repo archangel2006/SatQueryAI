@@ -1,6 +1,7 @@
 import { useEffect, useRef, type ReactNode } from 'react'
 import { ChatComposer } from './ChatComposer'
 import { ChatMessage, type ChatMessageData } from './ChatMessage'
+import type { AskLanguage } from '../../lib/api'
 import { AnalysisLoading } from './AnalysisLoading'
 
 type ChatPanelProps = {
@@ -18,6 +19,12 @@ type ChatPanelProps = {
   analysisLoading?: boolean
   analysisAction?: ReactNode
   headerExtra?: ReactNode
+  enableVoice?: boolean
+  voiceLanguage?: string
+  onVoiceText?: (text: string) => void
+  onVoiceError?: (message: string) => void
+  transcribe?: (audio: Blob, language: string) => Promise<string>
+  onPlay?: (text: string, language: AskLanguage) => void
   title?: string
   subtitle?: string
   allowAttachments?: boolean
@@ -38,6 +45,12 @@ export function ChatPanel({
   analysisLoading = false,
   analysisAction,
   headerExtra,
+  enableVoice,
+  voiceLanguage,
+  onVoiceText,
+  onVoiceError,
+  transcribe,
+  onPlay,
   title = 'Ask this scene',
   subtitle = 'Attach a scene, ask a question, then Send',
   allowAttachments = true,
@@ -72,6 +85,7 @@ export function ChatPanel({
             message={message}
             activeAttachmentId={activeAttachmentId}
             onSelectAttachment={onSelectAttachment}
+            onPlay={onPlay}
           />
         ))}
 
@@ -98,6 +112,11 @@ export function ChatPanel({
         onClearStaged={onClearStaged}
         allowAttachments={allowAttachments}
         busy={busy}
+        enableVoice={enableVoice}
+        voiceLanguage={voiceLanguage}
+        onVoiceText={onVoiceText}
+        onVoiceError={onVoiceError}
+        transcribe={transcribe}
       />
     </div>
   )
